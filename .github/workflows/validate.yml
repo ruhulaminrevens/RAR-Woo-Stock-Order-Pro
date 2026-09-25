@@ -88,11 +88,42 @@ jobs:
           rm -rf wp-content/plugins/rar-woo-stock-order/.git
           wp plugin activate rar-woo-stock-order
           wp rewrite flush --quiet
+      - name: Make the test site deterministic
+        run: |
+          # Test-only mu-plugin: no WP-Cron, no Action Scheduler loopback runner and no
+          # calls to outside websites during the tests, so background WooCommerce jobs
+          # on a brand-new site can't interfere with the plugin's own requests.
+          mkdir -p site/wp-content/mu-plugins
+          cat > site/wp-content/mu-plugins/rar-ci-quiet.php <<'PHP'
+          <?php
+          if ( ! defined( 'DISABLE_WP_CRON' ) ) { define( 'DISABLE_WP_CRON', true ); }
+          if ( ! defined( 'WP_HTTP_BLOCK_EXTERNAL' ) ) { define( 'WP_HTTP_BLOCK_EXTERNAL', true ); }
+          add_filter( 'action_scheduler_allow_async_request_runner', '__return_false' );
+          add_filter( 'pre_wp_mail', '__return_false' );
+          PHP
+          sed -i 's/^          //' site/wp-content/mu-plugins/rar-ci-quiet.php
+          php -l site/wp-content/mu-plugins/rar-ci-quiet.php
       - name: Start web server
         run: |
           cd site
-          nohup php -S 127.0.0.1:8080 > ../server.log 2>&1 &
-          sleep 2
+          # Supervisor: if the PHP test server ever exits, record its exit code
+          # (139 = segmentation fault) and start it again, so one crash is reported
+          # clearly instead of turning every later test into "could not connect".
+          cat > ../serve.sh <<'SH'
+          #!/bin/bash
+          while true; do
+            php -d log_errors=1 -d error_log=../php-errors.log -S 127.0.0.1:8080 >> ../server.log 2>&1
+            echo "SERVER EXITED code=$? at $(date -u +%T)" | tee -a ../server-crash.log >> ../server.log
+            sleep 1
+          done
+          SH
+          sed -i 's/^          //' ../serve.sh
+          chmod +x ../serve.sh
+          nohup ../serve.sh > /dev/null 2>&1 &
+          for i in $(seq 1 30); do
+            curl -fsS -o /dev/null http://127.0.0.1:8080/wp-login.php && break
+            sleep 1
+          done
           curl -fsS -o /dev/null -w "staff page: %{http_code}\n" http://127.0.0.1:8080/staff/
           curl -fsS "http://127.0.0.1:8080/?rar_wso_manifest=1" | python3 -m json.tool > /dev/null && echo "manifest: valid JSON"
           curl -fsS -o /dev/null -w "service worker: %{http_code} %{content_type}\n" "http://127.0.0.1:8080/?rar_wso_sw=1"
@@ -100,9 +131,21 @@ jobs:
         run: |
           cd site
           RAR_TEST_URL=http://127.0.0.1:8080 wp eval-file wp-content/plugins/rar-woo-stock-order/tests/smoke.php
-      - name: Server log
-        if: failure()
-        run: tail -n 100 server.log
+      - name: Server crash check
+        run: |
+          if [ -s server-crash.log ]; then
+            echo "::error::The PHP test web server crashed during the tests:"
+            cat server-crash.log
+            exit 1
+          fi
+          echo "No server crashes."
+      - name: Server and PHP error logs
+        if: always()
+        run: |
+          echo "=== server-crash.log ==="; cat server-crash.log 2>/dev/null || echo "(none)"
+          echo "=== php-errors.log ==="; tail -n 80 php-errors.log 2>/dev/null || echo "(none)"
+          echo "=== server.log (non-routine lines) ==="
+          grep -vE 'Accepted|Closing|\]: (GET|POST) .* - ?$|\[(200|201|302|304|400|401|403|404|409|422)\]:' server.log | tail -n 80 || true
 
   package:
     name: Build installable ZIP
