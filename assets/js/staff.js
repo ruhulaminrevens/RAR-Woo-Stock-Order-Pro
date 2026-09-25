@@ -125,6 +125,7 @@ const STATUSES = Object.keys(C.statuses || {});
 const LIVE = new Set(C.liveStatuses || ['pending', 'processing', 'on-hold']);
 const isReturn = s => s === 'cancelled' || s === 'refunded' || s.includes('return');
 const isVoid = s => ['cancelled', 'refunded', 'failed'].includes(s) || s.includes('return');
+const isSale = s => !isVoid(s) && s !== 'pending';
 const LVLABEL = { ok:`${THRESHOLD}+ In stock`, low:`Low 1–${THRESHOLD}`, out:'Stock out', untracked:'Not tracked' };
 const LVCHIP = { all:'All', live:'All live', ok:`${THRESHOLD}+ In stock`, low:`Low 1–${THRESHOLD}`, out:'Stock out', untracked:'Not tracked' };
 const levelOf = (p, qty) => {
@@ -480,7 +481,8 @@ async function loadReport() {
 const pill = s => `<span class="pill ${stClass(s)}">${esc(stLabel(s))}</span>`;
 function statusCtl(o, ro) {
     if (ro || !MANAGER) return pill(o.status);
-    const opts = STATUSES.includes(o.status) ? STATUSES : [o.status].concat(STATUSES);
+    const CHG = STATUSES.filter(s => !C.changeStatuses || C.changeStatuses.includes(s));
+    const opts = CHG.includes(o.status) ? CHG : [o.status].concat(CHG);
     return `<label class="ssel ${stClass(o.status)}"><span class="sr">Status of order ${esc(o.number)}</span><select id="st-${o.id}" data-status-for="${o.id}">${opts.map(s => `<option value="${esc(s)}"${s === o.status ? ' selected' : ''}>${esc(stLabel(s))}</option>`).join('')}</select></label>`;
 }
 function orderRow(o, opt = {}) {
@@ -614,7 +616,7 @@ function ordersView(cfg) {
     const v = Object.assign({ q:'', chip:'all', page:1, items:[], total:0, pages:1, counts:{}, loading:false, error:'', scope:'today', group:'all', chips:null, req:0 }, cfg);
     v.base = () => v.chips ? v.chips.filter(k => k !== 'all') : [];
     v.findOrder = id => v.items.find(o => o.id === id);
-    v.dropsOut = o => (v.group === 'live' || v.scope === 'stale') && !LIVE.has(o.status) || (v.fixed && o.status !== v.fixed) || (v.chip !== 'all' && o.status !== v.chip) || (v.group === 'void' && !isVoid(o.status)) || (v.group === 'sale' && isVoid(o.status));
+    v.dropsOut = o => (v.group === 'live' || v.scope === 'stale') && !LIVE.has(o.status) || (v.fixed && o.status !== v.fixed) || (v.chip !== 'all' && o.status !== v.chip) || (v.group === 'void' && !isVoid(o.status)) || (v.group === 'sale' && !isSale(o.status));
     v.fetch = async reset => {
         const my = ++v.req;
         if (reset) { v.page = 1; v.loading = true; v.error = ''; if (isTop(v)) drawBody(true); }
@@ -1261,7 +1263,7 @@ function createView() {
                 <div id="coItems"></div><p class="msg" id="itemsMsg" hidden></p>
                 <div class="totals">
                     <div class="tr"><span>Items subtotal</span><b id="tSub">${esc(money(0))}</b></div>
-                    <div class="tr tr-in"><label for="coDisc">Discount</label><div class="inl"><div class="unit" role="group" aria-label="Discount type"><button type="button" data-act="dt" data-dt="amount" aria-pressed="${f.discType === 'amount'}">${esc(C.currency || '৳')}</button><button type="button" data-act="dt" data-dt="percent" aria-pressed="${f.discType === 'percent'}">%</button></div><input type="text" id="coDisc" inputmode="decimal" placeholder="0" value="${esc(f.discount)}"></div><b id="tDisc">${esc(money(0))}</b></div>
+                    <div class="tr tr-in"><label for="coDisc">Discount${Number(C.maxDiscount ?? 100) < 100 ? ` <span class="opt">(max ${esc(String(C.maxDiscount))}%)</span>` : ''}</label><div class="inl"><div class="unit" role="group" aria-label="Discount type"><button type="button" data-act="dt" data-dt="amount" aria-pressed="${f.discType === 'amount'}">${esc(C.currency || '৳')}</button><button type="button" data-act="dt" data-dt="percent" aria-pressed="${f.discType === 'percent'}">%</button></div><input type="text" id="coDisc" inputmode="decimal" placeholder="0" value="${esc(f.discount)}"></div><b id="tDisc">${esc(money(0))}</b></div>
                     <div class="tr tr-in"><label for="coShip">Shipping</label><div class="inl"><input type="text" id="coShip" inputmode="decimal" placeholder="0" value="${esc(f.ship)}"></div><b id="tShip">${esc(money(0))}</b></div>
                     <p class="ship-hint" id="shipHint"></p>
                     <div class="tr tot"><span>Total</span><b id="tTot">${esc(money(0))}</b></div>
@@ -1292,6 +1294,12 @@ function createView() {
             toast(`${toBn(keys.length)}টি ঘর ঠিক করুন`, { error:true }); return;
         }
         const f = v.f, c = calc();
+        const maxPct = Number(C.maxDiscount ?? 100);
+        if (c.d > 0 && c.sub > 0 && c.d / c.sub * 100 > maxPct + 0.001) {
+            const el = $b('#coDisc'); if (el) { el.scrollIntoView({ block:'center', behavior:'smooth' }); el.focus({ preventScroll:true }); }
+            toast(maxPct <= 0 ? 'আপনার account থেকে discount দেওয়া যাবে না — Shop Manager-কে বলুন' : `Discount সর্বোচ্চ ${toBn(maxPct)}% (${esc(money(Math.floor(c.sub * maxPct) / 100))}) দেওয়া যাবে`, { error:true, long:true });
+            return;
+        }
         if (!v.reqId) v.reqId = newReqId();
         const payload = { request_id:v.reqId, name:f.name.trim(), phone:f.phone, email:f.email.trim(), address:f.address.trim(), city:f.city.trim(), district:f.district, note:f.note.trim(),
             shipping:c.ship, discount_type:f.discType, discount:parseFloat(fromBn(f.discount).replace(/[^\d.]/g, '') || '0') || 0, payment:f.pay,
@@ -1409,7 +1417,7 @@ function openKey(key) {
     const V = {
         'k-orders':() => ordersView({ key, title:L.orders, hue:'--c-orders', icon:'orders', scope:S.period, chips:['all', ...STATUSES] }),
         'k-orders-today':() => ordersView({ key, title:"Today's Orders", hue:'--c-orders', icon:'orders', scope:'today', chips:['all', ...STATUSES] }),
-        'k-sales':() => ordersView({ key, title:L.sales, hue:'--c-sales', icon:'taka', scope:S.period, group:'sale', chips:['all', ...STATUSES.filter(s => !isVoid(s))], totalLine:salesLine }),
+        'k-sales':() => ordersView({ key, title:L.sales, hue:'--c-sales', icon:'taka', scope:S.period, group:'sale', chips:['all', ...STATUSES.filter(isSale)], totalLine:salesLine }),
         'k-done':() => ordersView({ key, title:L.done, hue:'--c-done', icon:'check', scope:S.period, fixed:'completed' }),
         'k-ret':() => ordersView({ key, title:L.ret, hue:'--c-return', icon:'ret', scope:S.period, group:'void', chips:['all', ...STATUSES.filter(isReturn)] }),
         's-all':() => stockView('all'),

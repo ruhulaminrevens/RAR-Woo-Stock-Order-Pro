@@ -42,6 +42,7 @@ final class RAR_WSO_Plugin {
             'staff_slug'           => 'staff',
             'default_order_status' => 'processing',
             'allow_price_override' => 'yes',
+            'staff_max_discount'   => '20',
             'default_shipping'     => '0',
             'shipping_dhaka'       => '60',
             'shipping_outside'     => '120',
@@ -161,6 +162,18 @@ final class RAR_WSO_Plugin {
     /** Shop Manager level: order control, status changes and sales reports. */
     public static function is_manager() {
         return self::can( 'rar_wso_manage_orders' );
+    }
+
+    /**
+     * Largest order discount (percent of the items subtotal) this user may give.
+     * Shop Managers / Administrators are not limited; staff use the setting.
+     */
+    public static function max_discount_percent() {
+        if ( self::is_manager() ) {
+            return 100.0;
+        }
+        $settings = self::settings();
+        return (float) min( 100, max( 0, (float) $settings['staff_max_discount'] ) );
     }
 
     public static function can_view_orders() {

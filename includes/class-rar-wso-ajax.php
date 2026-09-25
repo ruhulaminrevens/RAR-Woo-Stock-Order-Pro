@@ -3,6 +3,9 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
+/** Order input the staff member can fix (reported as HTTP 422, not a server error). */
+class RAR_WSO_Input_Exception extends Exception {}
+
 class RAR_WSO_Ajax {
     public function __construct() {
         foreach ( array(
@@ -31,6 +34,10 @@ class RAR_WSO_Ajax {
 
     public function refresh() {
         nocache_headers();
+        $settings = RAR_WSO_Plugin::settings();
+        if ( 'yes' !== $settings['enabled'] ) {
+            wp_send_json_error( array( 'message' => __( 'The staff app is turned off in WooCommerce → Stock & Order.', 'rar-woo-stock-order' ) ), 403 );
+        }
         if ( ! is_user_logged_in() ) {
             wp_send_json_error( array( 'message' => __( 'Please sign in again.', 'rar-woo-stock-order' ), 'login' => true ), 401 );
         }
@@ -42,6 +49,11 @@ class RAR_WSO_Ajax {
 
     private function guard( $cap = 'rar_wso_access' ) {
         nocache_headers();
+
+        $settings = RAR_WSO_Plugin::settings();
+        if ( 'yes' !== $settings['enabled'] ) {
+            wp_send_json_error( array( 'message' => __( 'The staff app is turned off in WooCommerce → Stock & Order.', 'rar-woo-stock-order' ) ), 403 );
+        }
 
         if ( ! is_user_logged_in() ) {
             wp_send_json_error( array( 'message' => __( 'Please sign in again.', 'rar-woo-stock-order' ), 'login' => true ), 401 );
@@ -245,6 +257,13 @@ class RAR_WSO_Ajax {
             $live[] = $slug;
         }
         return array_values( (array) apply_filters( 'rar_wso_live_statuses', $live ) );
+    }
+
+    /** Statuses staff may set from the app. "Refunded" is left to WooCommerce's own refund flow. */
+    public static function changeable_statuses() {
+        $out = self::all_statuses();
+        unset( $out['refunded'] );
+        return (array) apply_filters( 'rar_wso_changeable_statuses', $out );
     }
 
     public static function all_statuses() {
@@ -827,6 +846,13 @@ class RAR_WSO_Ajax {
             wp_send_json_error( array( 'message' => __( 'Unknown order status.', 'rar-woo-stock-order' ) ), 422 );
         }
 
+        if ( ! isset( self::changeable_statuses()[ $status ] ) ) {
+            wp_send_json_error(
+                array( 'message' => __( 'Refunds must be made from the WooCommerce order screen (Refund button), so the money, stock and accounts stay correct. Use Cancelled or Returned here instead.', 'rar-woo-stock-order' ) ),
+                422
+            );
+        }
+
         $from = $order->get_status();
         if ( $from !== $status ) {
             $user = wp_get_current_user();
@@ -962,19 +988,47 @@ class RAR_WSO_Ajax {
         }
 
         $dedupe_key = '';
+        $lock_name  = '';
         if ( $request_id !== '' ) {
             $dedupe_key = 'rar_wso_req_' . md5( get_current_user_id() . '|' . $request_id );
-            $existing   = absint( get_transient( $dedupe_key ) );
-            if ( $existing ) {
-                $existing_order = wc_get_order( $existing );
-                if ( $existing_order ) {
-                    $this->send_order_success(
-                        $existing_order,
-                        __( 'This order was already created. Showing the existing order instead of creating a duplicate.', 'rar-woo-stock-order' ),
-                        true
+
+            $existing_order = $this->find_request_order( $dedupe_key, $request_id );
+            if ( $existing_order ) {
+                $this->send_order_success(
+                    $existing_order,
+                    __( 'This order was already created. Showing the existing order instead of creating a duplicate.', 'rar-woo-stock-order' ),
+                    true
+                );
+            }
+
+            // Atomic lock: add_option() is an INSERT on a unique key, so only one of two
+            // simultaneous requests with the same request ID can get past this point.
+            $lock_name = 'rar_wso_lock_' . md5( get_current_user_id() . '|' . $request_id );
+            if ( ! add_option( $lock_name, time(), '', 'no' ) ) {
+                $locked_at = (int) get_option( $lock_name, 0 );
+                if ( $locked_at && ( time() - $locked_at ) < 120 ) {
+                    wp_send_json_error(
+                        array( 'message' => __( 'This order is already being saved. Please wait a moment.', 'rar-woo-stock-order' ), 'busy' => true ),
+                        409
                     );
                 }
+                // Stale lock left by a crashed request: take it over.
+                delete_option( $lock_name );
+                if ( ! add_option( $lock_name, time(), '', 'no' ) ) {
+                    wp_send_json_error( array( 'message' => __( 'This order is already being saved. Please wait a moment.', 'rar-woo-stock-order' ), 'busy' => true ), 409 );
+                }
             }
+            // A request that finished between our first check and taking the lock.
+            $existing_order = $this->find_request_order( $dedupe_key, $request_id );
+            if ( $existing_order ) {
+                delete_option( $lock_name );
+                $this->send_order_success(
+                    $existing_order,
+                    __( 'This order was already created. Showing the existing order instead of creating a duplicate.', 'rar-woo-stock-order' ),
+                    true
+                );
+            }
+            register_shutdown_function( 'delete_option', $lock_name );
         }
 
         $settings     = RAR_WSO_Plugin::settings();
@@ -990,10 +1044,50 @@ class RAR_WSO_Ajax {
             $chosen = 'cod';
         }
 
+        // Stock check on the combined quantity per stock owner, so the same product (or
+        // variations sharing the parent's stock) sent on several lines cannot oversell.
+        $need = array();
+        foreach ( $items as $raw ) {
+            $product = wc_get_product( absint( is_array( $raw ) ? ( $raw['id'] ?? 0 ) : 0 ) );
+            if ( ! $product ) {
+                continue;
+            }
+            $qty = max( 1, absint( $raw['qty'] ?? 1 ) );
+            if ( $product->managing_stock() && ! $product->backorders_allowed() ) {
+                $owner_id = (int) $product->get_stock_managed_by_id();
+                if ( ! isset( $need[ $owner_id ] ) ) {
+                    $owner            = $owner_id === $product->get_id() ? $product : wc_get_product( $owner_id );
+                    $need[ $owner_id ] = array( 'qty' => 0, 'stock' => (float) ( $owner ? $owner->get_stock_quantity() : 0 ), 'name' => $owner ? $owner->get_name() : $product->get_name() );
+                }
+                $need[ $owner_id ]['qty'] += $qty;
+            }
+        }
+        foreach ( $need as $row ) {
+            if ( $row['qty'] > $row['stock'] ) {
+                wp_send_json_error(
+                    array(
+                        'message' => sprintf(
+                            /* translators: 1: quantity in stock, 2: product name, 3: quantity ordered */
+                            __( 'Only %1$s unit(s) of %2$s are in stock, but %3$s were added to this order.', 'rar-woo-stock-order' ),
+                            wc_format_localized_decimal( $row['stock'] ),
+                            wp_strip_all_tags( $row['name'] ),
+                            wc_format_localized_decimal( $row['qty'] )
+                        ),
+                    ),
+                    422
+                );
+            }
+        }
+
         try {
             $order = wc_create_order( array( 'status' => 'pending' ) );
             if ( is_wp_error( $order ) ) {
                 throw new Exception( $order->get_error_message() );
+            }
+            if ( $request_id !== '' ) {
+                $order->update_meta_data( '_rar_wso_request_id', $request_id );
+                $order->update_meta_data( '_rar_wso_created_by', get_current_user_id() );
+                $order->save();
             }
 
             $parts = preg_split( '/\s+/', trim( $name ), 2 );
@@ -1087,6 +1181,20 @@ class RAR_WSO_Ajax {
             $discount = 'percent' === $disc_type
                 ? round( $items_subtotal * min( 100, $disc_value ) / 100, wc_get_price_decimals() )
                 : min( $disc_value, $items_subtotal );
+
+            $max_pct = RAR_WSO_Plugin::max_discount_percent();
+            if ( $discount > 0 && $items_subtotal > 0 && ( $discount / $items_subtotal * 100 ) > $max_pct + 0.001 ) {
+                throw new RAR_WSO_Input_Exception(
+                    0 >= $max_pct
+                        ? __( 'Your account cannot give discounts. Ask a Shop Manager.', 'rar-woo-stock-order' )
+                        : sprintf(
+                            /* translators: 1: max percent, 2: max amount */
+                            __( 'Discount is above your limit of %1$s%% (%2$s for this order). Ask a Shop Manager for a bigger discount.', 'rar-woo-stock-order' ),
+                            wc_format_localized_decimal( $max_pct ),
+                            trim( html_entity_decode( wp_strip_all_tags( wc_price( $items_subtotal * $max_pct / 100 ) ), ENT_QUOTES, 'UTF-8' ), " \t\n\r\0\x0B\xC2\xA0" )
+                        )
+                );
+            }
 
             if ( $discount > 0 ) {
                 $fee = new WC_Order_Item_Fee();
@@ -1189,8 +1297,60 @@ class RAR_WSO_Ajax {
                 );
             }
 
-            wp_send_json_error( array( 'message' => $e->getMessage() ), 500 );
+            wp_send_json_error( array( 'message' => $e->getMessage() ), $e instanceof RAR_WSO_Input_Exception ? 422 : 500 );
         }
+    }
+
+    /** Finds an order already created for this staff request ID (transient first, then order meta). */
+    private function find_request_order( $dedupe_key, $request_id ) {
+        $id = absint( get_transient( $dedupe_key ) );
+        if ( $id ) {
+            $order = wc_get_order( $id );
+            if ( $order ) {
+                return $order;
+            }
+        }
+        // Look the request ID up in the order storage that is actually active. (Legacy
+        // post storage ignores wc_get_orders() meta_query, so query posts directly there.)
+        $ids = array();
+        if ( RAR_WSO_Reports::hpos() ) {
+            $ids = wc_get_orders(
+                array(
+                    'limit'      => 5,
+                    'type'       => 'shop_order',
+                    'status'     => array_keys( wc_get_order_statuses() ),
+                    'return'     => 'ids',
+                    'meta_query' => array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
+                        array( 'key' => '_rar_wso_request_id', 'value' => $request_id ),
+                    ),
+                )
+            );
+        } else {
+            $ids = get_posts(
+                array(
+                    'post_type'        => 'shop_order',
+                    'post_status'      => array_keys( wc_get_order_statuses() ),
+                    'posts_per_page'   => 5,
+                    'fields'           => 'ids',
+                    'no_found_rows'    => true,
+                    'suppress_filters' => true,
+                    'meta_key'         => '_rar_wso_request_id', // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key
+                    'meta_value'       => $request_id, // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_value
+                )
+            );
+        }
+        // Never trust the query alone: only return an order whose own meta matches.
+        foreach ( (array) $ids as $id ) {
+            $order = wc_get_order( $id );
+            if (
+                $order &&
+                $request_id === (string) $order->get_meta( '_rar_wso_request_id' ) &&
+                (int) $order->get_meta( '_rar_wso_created_by' ) === get_current_user_id()
+            ) {
+                return $order;
+            }
+        }
+        return null;
     }
 
     private function send_order_success( $order, $message, $duplicate ) {

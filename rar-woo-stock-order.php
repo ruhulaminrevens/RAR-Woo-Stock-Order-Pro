@@ -3,7 +3,7 @@
  * Plugin Name: RAR Woo Stock & Order
  * Plugin URI: https://github.com/ruhulaminrevens/RAR-Woo-Stock-Order-Pro
  * Description: Mobile-first WooCommerce PWA for controlled stock updates and fast staff order creation.
- * Version: 1.2.1
+ * Version: 1.2.2
  * Author: Ruhul Amin Revens
  * Author URI: https://github.com/ruhulaminrevens
  * Text Domain: rar-woo-stock-order
@@ -21,7 +21,7 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
-define( 'RAR_WSO_VERSION', '1.2.1' );
+define( 'RAR_WSO_VERSION', '1.2.2' );
 define( 'RAR_WSO_FILE', __FILE__ );
 define( 'RAR_WSO_PATH', plugin_dir_path( __FILE__ ) );
 define( 'RAR_WSO_URL', plugin_dir_url( __FILE__ ) );

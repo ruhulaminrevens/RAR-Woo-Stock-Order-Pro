@@ -5,7 +5,7 @@ Requires at least: 6.3
 Tested up to: 7.0
 Requires PHP: 7.4
 Requires Plugins: woocommerce
-Stable tag: 1.2.1
+Stable tag: 1.2.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -46,6 +46,9 @@ Features:
 
 == Upgrade Notice ==
 
+= 1.2.2 =
+Order and report hardening. After updating, review the new "Staff discount limit" setting (default 20%) under WooCommerce > Stock & Order.
+
 = 1.2.1 =
 Phone app fixes: in-app login, automatic session renewal, PNG icons, offline screen and cache-safe PWA files. After updating, open /staff/ on each phone once. If the app was already installed, remove the old home-screen icon and install again to get the new icon.
 
@@ -56,6 +59,15 @@ Take a backup, then upload the v1.2.0 ZIP and choose "Replace current with uploa
 If v1.0.0 was installed directly from a GitHub source archive and uses a versioned plugin folder, deactivate/delete the old plugin files first, then install the official v1.1.0 release ZIP. Settings and WooCommerce operational data are preserved.
 
 == Changelog ==
+
+= 1.2.2 =
+* Atomic duplicate-order protection and persistent request lookup (5 simultaneous saves create 1 order).
+* Stock checked on combined quantity per product across order lines.
+* New Staff discount limit setting, enforced on the server.
+* Refunded status can no longer be set from the app (use the WooCommerce refund flow).
+* Disabling the staff app now also blocks all staff AJAX actions.
+* Reports exclude pending payment and returned orders and subtract partial refunds.
+* Runtime smoke tests and GitHub Actions CI.
 
 = 1.2.1 =
 * Fixed the app breaking after login when LiteSpeed/Hostinger or other optimizers minified, deferred or delayed its CSS/JS.

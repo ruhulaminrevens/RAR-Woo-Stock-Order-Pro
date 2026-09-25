@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.2.2 — 2026-09-25
+
+Hardening release from an external code review. All items were confirmed in the code and are now covered by automated tests.
+
+### Orders
+- **Duplicate orders from double-taps / retries.** An atomic per-request lock stops two identical saves from creating two orders. The request ID is also stored on the order, so a retry finds the existing order even after the 15-minute cache expires. Verified: 5 simultaneous identical saves produced exactly 1 order and 1 stock reduction.
+- **Combined stock check.** Stock is now checked on the total quantity per product (including variations sharing the parent's stock), so the same product added on two lines can't oversell.
+- **Staff discount limit.** New setting *Staff discount limit* (default 20% of the items subtotal; 0 = no discounts). It is enforced on the server and shown in the app ("Discount (max 20%)"). Shop Managers and Administrators are not limited.
+- **"Refunded" can't be set from the app.** Setting it doesn't return any money. Refunds stay in the WooCommerce order screen, so money, stock and reports stay correct.
+
+### Security
+- **App switched off = backend switched off.** When the staff app is disabled, every staff AJAX action (stock, orders, reports, session refresh) is refused, not just the /staff/ page.
+
+### Reports
+- **Pending payment** orders and **Returned** statuses no longer count as sales. Pending orders are counted separately.
+- **Partial refunds are subtracted.** Sales figures are now net of WooCommerce refunds (full and partial). Gross and refund totals are available in the report data.
+
+### Quality
+- New `tests/smoke.php` runtime test (33 checks) and a GitHub Actions workflow that runs PHP 7.4/8.1/8.3 lint, JS syntax, and the runtime tests on WordPress + WooCommerce with HPOS on and off, then builds the installable ZIP.
+
+
 ## 1.2.1 — 2026-09-25
 
 ### Phone app (PWA) fixes

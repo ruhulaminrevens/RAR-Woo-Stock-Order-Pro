@@ -13,10 +13,15 @@ class RAR_WSO_Reports {
     /** Statuses that do not count as a sale. */
     const VOID_STATUSES = array( 'cancelled', 'refunded', 'failed', 'checkout-draft', 'trash' );
 
+    /** Not a sale yet: the customer has not confirmed / paid (unfinished checkout). */
+    const UNCONFIRMED_STATUSES = array( 'pending' );
+
     public static function hooks() {
         add_action( 'woocommerce_new_order', array( __CLASS__, 'bust' ) );
         add_action( 'woocommerce_order_status_changed', array( __CLASS__, 'bust' ) );
         add_action( 'woocommerce_update_order', array( __CLASS__, 'bust' ) );
+        add_action( 'woocommerce_order_refunded', array( __CLASS__, 'bust' ) );
+        add_action( 'woocommerce_refund_deleted', array( __CLASS__, 'bust' ) );
     }
 
     public static function bust() {
@@ -104,17 +109,22 @@ class RAR_WSO_Reports {
                 WHERE p.post_type = 'shop_order' AND p.post_status NOT IN ('trash','auto-draft') AND p.post_date_gmt >= %s AND p.post_date_gmt <= %s";
         }
 
-        $raw = $wpdb->get_results( $wpdb->prepare( $sql, $a, $b ), ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-        $out = array();
+        $raw     = $wpdb->get_results( $wpdb->prepare( $sql, $a, $b ), ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+        $refunds = self::refunds_for( wp_list_pluck( (array) $raw, 'id' ) );
+        $out     = array();
         foreach ( (array) $raw as $r ) {
             $status = 0 === strpos( (string) $r['status'], 'wc-' ) ? substr( $r['status'], 3 ) : (string) $r['status'];
             if ( 'checkout-draft' === $status ) {
                 continue;
             }
+            $gross    = (float) $r['total'];
+            $refunded = min( $gross, (float) ( $refunds[ (int) $r['id'] ] ?? 0 ) );
             $out[] = array(
                 'id'      => (int) $r['id'],
                 'status'  => $status,
-                'total'   => (float) $r['total'],
+                'total'   => $gross - $refunded, // net of partial refunds
+                'gross'   => $gross,
+                'refunded' => $refunded,
                 'time'    => strtotime( $r['created'] . ' UTC' ),
                 'payment' => (string) $r['payment'],
                 'via'     => (string) $r['via'],
@@ -123,8 +133,44 @@ class RAR_WSO_Reports {
         return $out;
     }
 
+    /**
+     * Refunded amount per order ID (WooCommerce refund records, full or partial).
+     *
+     * @param int[] $ids Order IDs.
+     * @return array<int, float>
+     */
+    public static function refunds_for( $ids ) {
+        global $wpdb;
+        $ids = array_values( array_filter( array_map( 'absint', (array) $ids ) ) );
+        if ( ! $ids ) {
+            return array();
+        }
+        $out = array();
+        foreach ( array_chunk( $ids, 500 ) as $chunk ) {
+            $in = implode( ',', $chunk );
+            if ( self::hpos() ) {
+                $orders = \Automattic\WooCommerce\Utilities\OrderUtil::get_table_for_orders();
+                $sql    = "SELECT parent_order_id AS pid, SUM(ABS(total_amount)) AS amt FROM {$orders} WHERE type = 'shop_order_refund' AND parent_order_id IN ({$in}) GROUP BY parent_order_id";
+            } else {
+                $sql = "SELECT p.post_parent AS pid, SUM(ABS(m.meta_value)) AS amt FROM {$wpdb->posts} p
+                    JOIN {$wpdb->postmeta} m ON m.post_id = p.ID AND m.meta_key = '_refund_amount'
+                    WHERE p.post_type = 'shop_order_refund' AND p.post_parent IN ({$in}) GROUP BY p.post_parent";
+            }
+            foreach ( (array) $wpdb->get_results( $sql, ARRAY_A ) as $r ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared -- IDs are absint()-ed.
+                $out[ (int) $r['pid'] ] = (float) $r['amt'];
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Counts as a sale: not cancelled / refunded / failed, not a return status,
+     * and not an unconfirmed "pending payment" checkout.
+     */
     public static function is_sale( $status ) {
-        return ! in_array( $status, self::VOID_STATUSES, true );
+        return ! in_array( $status, self::VOID_STATUSES, true )
+            && ! in_array( $status, self::UNCONFIRMED_STATUSES, true )
+            && false === strpos( (string) $status, 'return' );
     }
 
     public static function is_return( $status ) {
@@ -133,12 +179,16 @@ class RAR_WSO_Reports {
 
     /** @return array<string, float|int> */
     public static function summarize( $rows ) {
-        $s = array( 'orders' => 0, 'sales' => 0.0, 'sale_orders' => 0, 'completed' => 0, 'cancelled' => 0, 'returned' => 0, 'failed' => 0 );
+        $s = array( 'orders' => 0, 'sales' => 0.0, 'gross' => 0.0, 'refunds' => 0.0, 'sale_orders' => 0, 'completed' => 0, 'cancelled' => 0, 'returned' => 0, 'failed' => 0, 'pending' => 0 );
         foreach ( $rows as $r ) {
             $s['orders']++;
             if ( self::is_sale( $r['status'] ) ) {
-                $s['sales'] += $r['total'];
+                $s['sales']   += $r['total'];
+                $s['gross']   += $r['gross'] ?? $r['total'];
+                $s['refunds'] += $r['refunded'] ?? 0;
                 $s['sale_orders']++;
+            } elseif ( in_array( $r['status'], self::UNCONFIRMED_STATUSES, true ) ) {
+                $s['pending']++;
             }
             if ( 'completed' === $r['status'] ) {
                 $s['completed']++;

@@ -395,6 +395,8 @@ self.addEventListener('fetch', e => {
             'shippingOutside'  => '' === (string) $settings['shipping_outside'] ? null : (float) $settings['shipping_outside'],
             'threshold'        => RAR_WSO_Plugin::low_threshold(),
             'statuses'         => RAR_WSO_Ajax::all_statuses(),
+            'changeStatuses'   => array_keys( RAR_WSO_Ajax::changeable_statuses() ),
+            'maxDiscount'      => RAR_WSO_Plugin::max_discount_percent(),
             'liveStatuses'     => RAR_WSO_Ajax::live_statuses(),
             'payments'         => RAR_WSO_Ajax::payment_options(),
             'timezone'         => wp_timezone_string(),

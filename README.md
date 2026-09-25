@@ -2,13 +2,13 @@
 
 Mobile-first **WooCommerce stock manager and staff order entry app (PWA)** for teams that work mainly from their phones.
 
-![Version](https://img.shields.io/badge/version-1.2.1-15234a) ![WordPress](https://img.shields.io/badge/WordPress-6.3%2B-21759b) ![WooCommerce](https://img.shields.io/badge/WooCommerce-8.0%2B-7f54b3) ![PHP](https://img.shields.io/badge/PHP-7.4%2B-777bb4)
+![Version](https://img.shields.io/badge/version-1.2.2-15234a) ![WordPress](https://img.shields.io/badge/WordPress-6.3%2B-21759b) ![WooCommerce](https://img.shields.io/badge/WooCommerce-8.0%2B-7f54b3) ![PHP](https://img.shields.io/badge/PHP-7.4%2B-777bb4)
 
 ## ⬇️ Download
 
-### [Download RAR Woo Stock & Order v1.2.1 (ZIP)](https://github.com/ruhulaminrevens/RAR-Woo-Stock-Order-Pro/raw/main/dist/rar-woo-stock-order-v1.2.1.zip)
+### [Download RAR Woo Stock & Order v1.2.2 (ZIP)](https://github.com/ruhulaminrevens/RAR-Woo-Stock-Order-Pro/raw/main/dist/rar-woo-stock-order-v1.2.2.zip)
 
-- **File:** `rar-woo-stock-order-v1.2.1.zip`
+- **File:** `rar-woo-stock-order-v1.2.2.zip`
 - **Install:** WordPress → Plugins → Add New → **Upload Plugin**
 - **Upgrade:** choose **Replace current with uploaded**
 
@@ -32,11 +32,23 @@ Mobile-first **WooCommerce stock manager and staff order entry app (PWA)** for t
 | **Android (Chrome)** | Open `https://your-site.com/staff/` → log in → tap the **Install app** button at the bottom of the page (or Chrome menu ⋮ → **Install app / Add to Home screen**) |
 | **iPhone (Safari)** | Open `https://your-site.com/staff/` **in Safari** → log in → **Share** ⎋ → **Add to Home Screen** |
 
-- If the app was already installed before v1.2.1: **delete the old icon from the home screen**, open `/staff/` in the browser and install it again. This gives you the new icon and the fixes.
+- If the app was installed before v1.2.1: **delete the old icon from the home screen**, open `/staff/` in the browser and install it again. This gives you the new icon and the fixes.
 - Long-press the app icon for the **Create Order** and **Stock Manager** shortcuts (Android).
 - The site must be on **HTTPS**, otherwise the phone won't install the app.
 
-## What's new in v1.2.1: phone app fixes
+## What's new in v1.2.2: order and report hardening
+
+| Problem | Fix (v1.2.2) |
+|---|---|
+| A double-tap or slow network could create the same order twice | Atomic lock + request ID saved on the order. 5 simultaneous saves create exactly 1 order |
+| The same product on two lines could sell more than the stock | Stock is checked on the combined quantity |
+| Staff could give any discount, even 100% | New **Staff discount limit** setting (default 20%). Shop Managers are not limited |
+| "Refunded" could be set in the app without refunding money | Blocked. Use WooCommerce's Refund button |
+| With the app turned off, stock/order actions still worked | Everything is blocked while the app is off |
+| Pending/returned orders counted in sales; partial refunds not subtracted | Net sales, pending counted separately |
+| No automated tests | `tests/smoke.php` (33 checks) + GitHub Actions CI |
+
+## Earlier in v1.2.1: phone app fixes
 
 | Problem (v1.2.0) | Fix (v1.2.1) |
 |---|---|
@@ -55,14 +67,16 @@ Full details: [CHANGELOG.md](CHANGELOG.md) · [RELEASE_NOTES.md](RELEASE_NOTES.m
 ```
 RAR-Woo-Stock-Order-Pro/
 ├── README.md                          ← this page
+├── .github/workflows/validate.yml    ← automated checks (CI)
 ├── dist/
-│   └── rar-woo-stock-order-v1.2.1.zip ← installable plugin (download this)
+│   └── rar-woo-stock-order-v1.2.2.zip ← installable plugin (download this)
 ├── rar-woo-stock-order.php            ← plugin source code
 ├── includes/
 ├── assets/ (css, js, icons)
 ├── CHANGELOG.md
 ├── RELEASE_NOTES.md
-└── readme.txt
+├── readme.txt
+└── tests/smoke.php                    ← runtime tests (33 checks)
 ```
 
 ## What this plugin is for
@@ -159,6 +173,7 @@ Available settings:
 - Staff URL slug
 - Default new order status
 - Allow item-price override
+- Staff discount limit (default 20%; Shop Managers not limited)
 - Shipping — Inside Dhaka / Outside Dhaka (auto-filled by district)
 - Default shipping charge
 - Low stock level (default 10)
@@ -200,6 +215,7 @@ This keeps RAR Woo Stock & Order focused while allowing other WooCommerce plugin
 ## Compatibility
 
 - WordPress 6.3+ (tested on 7.0.2)
+- Tested with automated runtime tests: HPOS on and legacy order storage
 - WooCommerce 8.0+ (tested on 11.1.2), HPOS supported
 - PHP 7.4+
 - Works on Hostinger shared hosting (LiteSpeed). Needs no Node.js or extra server software
