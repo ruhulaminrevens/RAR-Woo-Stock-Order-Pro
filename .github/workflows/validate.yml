@@ -91,7 +91,7 @@ jobs:
       - name: Start web server
         run: |
           cd site
-          PHP_CLI_SERVER_WORKERS=4 nohup php -S 127.0.0.1:8080 > ../server.log 2>&1 &
+          nohup php -S 127.0.0.1:8080 > ../server.log 2>&1 &
           sleep 2
           curl -fsS -o /dev/null -w "staff page: %{http_code}\n" http://127.0.0.1:8080/staff/
           curl -fsS "http://127.0.0.1:8080/?rar_wso_manifest=1" | python3 -m json.tool > /dev/null && echo "manifest: valid JSON"
