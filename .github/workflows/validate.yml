@@ -1,0 +1,124 @@
+name: Validate plugin
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  syntax:
+    name: Syntax (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: [ '7.4', '8.1', '8.3' ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+      - name: PHP lint
+        run: |
+          set -e
+          find . -name '*.php' -not -path './.git/*' -print0 | xargs -0 -n1 php -l
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: JavaScript syntax
+        run: node --check assets/js/staff.js
+      - name: Required files
+        run: |
+          set -e
+          for f in rar-woo-stock-order.php uninstall.php assets/css/staff.css assets/js/staff.js \
+                   assets/icons/icon-192.png assets/icons/icon-512.png assets/icons/maskable-512.png assets/icons/apple-touch-icon.png; do
+            test -f "$f" || { echo "Missing $f"; exit 1; }
+          done
+          V_HEADER=$(grep -m1 -oP '^\s*\*\s*Version:\s*\K[0-9.]+' rar-woo-stock-order.php)
+          V_CONST=$(grep -m1 -oP "RAR_WSO_VERSION',\s*'\K[0-9.]+" rar-woo-stock-order.php)
+          V_README=$(grep -m1 -oP '^Stable tag:\s*\K[0-9.]+' readme.txt)
+          echo "header=$V_HEADER const=$V_CONST readme=$V_README"
+          test "$V_HEADER" = "$V_CONST" && test "$V_HEADER" = "$V_README"
+
+  runtime:
+    name: WordPress + WooCommerce (HPOS ${{ matrix.hpos }})
+    runs-on: ubuntu-latest
+    needs: syntax
+    strategy:
+      fail-fast: false
+      matrix:
+        hpos: [ 'yes', 'no' ]
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: wp
+        ports: [ '3306:3306' ]
+        options: --health-cmd="mysqladmin ping -proot" --health-interval=5s --health-timeout=5s --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: plugin
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mysqli, gd, intl, zip
+          tools: wp-cli
+          coverage: none
+      - name: Install WordPress + WooCommerce
+        run: |
+          set -e
+          mkdir site && cd site
+          wp core download --quiet
+          wp config create --dbname=wp --dbuser=root --dbpass=root --dbhost=127.0.0.1 --quiet
+          wp core install --url=http://127.0.0.1:8080 --title="RAR CI" --admin_user=admin --admin_password=admin --admin_email=ci@example.com --skip-email --quiet
+          wp rewrite structure '/%postname%/' --quiet
+          wp plugin install woocommerce --activate --quiet
+          wp option update woocommerce_currency BDT
+          wp option update woocommerce_default_country 'BD:BD-13'
+          wp option update timezone_string Asia/Dhaka
+          wp option update woocommerce_custom_orders_table_enabled ${{ matrix.hpos }}
+          cp -r ../plugin wp-content/plugins/rar-woo-stock-order
+          rm -rf wp-content/plugins/rar-woo-stock-order/.git
+          wp plugin activate rar-woo-stock-order
+          wp rewrite flush --quiet
+      - name: Start web server
+        run: |
+          cd site
+          PHP_CLI_SERVER_WORKERS=4 nohup php -S 127.0.0.1:8080 > ../server.log 2>&1 &
+          sleep 2
+          curl -fsS -o /dev/null -w "staff page: %{http_code}\n" http://127.0.0.1:8080/staff/
+          curl -fsS "http://127.0.0.1:8080/?rar_wso_manifest=1" | python3 -m json.tool > /dev/null && echo "manifest: valid JSON"
+          curl -fsS -o /dev/null -w "service worker: %{http_code} %{content_type}\n" "http://127.0.0.1:8080/?rar_wso_sw=1"
+      - name: Smoke tests
+        run: |
+          cd site
+          RAR_TEST_URL=http://127.0.0.1:8080 wp eval-file wp-content/plugins/rar-woo-stock-order/tests/smoke.php
+      - name: Server log
+        if: failure()
+        run: tail -n 100 server.log
+
+  package:
+    name: Build installable ZIP
+    runs-on: ubuntu-latest
+    needs: runtime
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: rar-woo-stock-order
+      - name: Zip plugin folder
+        run: |
+          VERSION=$(grep -m1 -oP '^\s*\*\s*Version:\s*\K[0-9.]+' rar-woo-stock-order/rar-woo-stock-order.php)
+          zip -qr "rar-woo-stock-order-v${VERSION}.zip" rar-woo-stock-order \
+            -x 'rar-woo-stock-order/.git/*' 'rar-woo-stock-order/.github/*' 'rar-woo-stock-order/dist/*' 'rar-woo-stock-order/tests/*'
+          unzip -l "rar-woo-stock-order-v${VERSION}.zip" | tail -3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rar-woo-stock-order-zip
+          path: rar-woo-stock-order-v*.zip
