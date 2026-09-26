@@ -157,7 +157,7 @@ function rar_staff_login_post( $login, $pwd, $with_nonce = true ) {
 // Test-only probe: records what other plugins see when WooCommerce announces a new order.
 $probe_file = WP_CONTENT_DIR . '/mu-plugins/rar-smoke-probe.php';
 wp_mkdir_p( dirname( $probe_file ) );
-file_put_contents( $probe_file, "<?php\nadd_action( 'rar_wso_order_created', function ( \$order ) { if ( 'RARTEST-THROW' === \$order->get_customer_note() ) { throw new RuntimeException( 'integration hook failed' ); } } );\nadd_filter( 'woocommerce_can_reduce_order_stock', function ( \$ok, \$order ) { return ( 'RARTEST-NOREDUCE' === \$order->get_customer_note() && \$order->has_status( 'pending' ) ) ? false : \$ok; }, 10, 2 );\nif ( isset( \$_GET['rar_smoke_force_role'] ) ) { add_filter( 'pre_option_default_role', function () { return 'rar_wso_staff'; } ); }\nadd_action( 'woocommerce_new_order', function ( \$id, \$order = null ) { \$order = \$order ?: wc_get_order( \$id ); update_option( 'rar_smoke_new_order', array( 'n' => (int) ( get_option( 'rar_smoke_new_order' )['n'] ?? 0 ) + 1, 'items' => count( \$order->get_items() ), 'phone' => \$order->get_billing_phone(), 'total' => (float) \$order->get_total() ), false ); }, 10, 2 );\n" );
+file_put_contents( $probe_file, "<?php\n// A brand-new CI site: stop WooCommerce's one-time setup-wizard redirect from hijacking the first wp-admin request.\nadd_filter( 'woocommerce_prevent_automatic_wizard_redirect', '__return_true' );\nadd_action( 'rar_wso_order_created', function ( \$order ) { if ( 'RARTEST-THROW' === \$order->get_customer_note() ) { throw new RuntimeException( 'integration hook failed' ); } } );\nadd_filter( 'woocommerce_can_reduce_order_stock', function ( \$ok, \$order ) { return ( 'RARTEST-NOREDUCE' === \$order->get_customer_note() && \$order->has_status( 'pending' ) ) ? false : \$ok; }, 10, 2 );\nif ( isset( \$_GET['rar_smoke_force_role'] ) ) { add_filter( 'pre_option_default_role', function () { return 'rar_wso_staff'; } ); }\nadd_action( 'woocommerce_new_order', function ( \$id, \$order = null ) { \$order = \$order ?: wc_get_order( \$id ); update_option( 'rar_smoke_new_order', array( 'n' => (int) ( get_option( 'rar_smoke_new_order' )['n'] ?? 0 ) + 1, 'items' => count( \$order->get_items() ), 'phone' => \$order->get_billing_phone(), 'total' => (float) \$order->get_total() ), false ); }, 10, 2 );\n" );
 
 echo "RAR Woo Stock & Order " . RAR_WSO_VERSION . " — smoke tests against {$GLOBALS['rar_base']}\n";
 echo 'WordPress ' . get_bloginfo( 'version' ) . ' · WooCommerce ' . WC()->version . ' · PHP ' . PHP_VERSION . ' · HPOS ' . ( RAR_WSO_Reports::hpos() ? 'on' : 'off' ) . "\n\n";
@@ -469,6 +469,7 @@ try {
 	rar_ok( $self && ! array_intersect( array( 'rar_wso_staff', 'shop_manager', 'administrator' ), (array) $self->roles ), 'public sign-up that would get the staff role is downgraded to Customer', $self ? implode( ',', (array) $self->roles ) : 'no user (HTTP ' . wp_remote_retrieve_response_code( $res ) . ')' );
 
 	echo "\nStaff accounts added by an Administrator (v1.3.0)\n";
+	delete_transient( '_wc_activation_redirect' ); // fresh site: WooCommerce would send the first admin request to its setup wizard
 	rar_login( $admin );
 	$res = wp_remote_post( $GLOBALS['rar_base'] . '/wp-admin/admin-post.php', array( 'timeout' => 30, 'redirection' => 0, 'cookies' => $GLOBALS['rar_auth'], 'body' => array( 'action' => 'rar_wso_add_staff', '_wpnonce' => wp_create_nonce( 'rar_wso_add_staff' ), 'user_login' => 'rartest_newstaff', 'user_email' => 'newstaff@example.test', 'display_name' => 'RARTEST New Staff' ) ) );
 	wp_cache_flush();
@@ -476,7 +477,8 @@ try {
 	if ( $new ) {
 		$extra_users[] = $new->ID;
 	}
-	rar_ok( 302 === (int) wp_remote_retrieve_response_code( $res ) && $new && array( 'rar_wso_staff' ) === array_values( $new->roles ), 'admin creates a staff account (role Staff only)', (string) wp_remote_retrieve_response_code( $res ) );
+	$flash = get_transient( 'rar_wso_flash_' . $admin );
+	rar_ok( 302 === (int) wp_remote_retrieve_response_code( $res ) && $new && array( 'rar_wso_staff' ) === array_values( $new->roles ), 'admin creates a staff account (role Staff only)', wp_remote_retrieve_response_code( $res ) . ' ' . wp_json_encode( $flash ) . ' roles=' . ( $new ? implode( ',', $new->roles ) : 'none' ) );
 	rar_login( $manager );
 	$res = wp_remote_post( $GLOBALS['rar_base'] . '/wp-admin/admin-post.php', array( 'timeout' => 30, 'redirection' => 0, 'cookies' => $GLOBALS['rar_auth'], 'body' => array( 'action' => 'rar_wso_add_staff', '_wpnonce' => wp_create_nonce( 'rar_wso_add_staff' ), 'user_login' => 'rartest_sneaky', 'user_email' => 'sneaky@example.test' ) ) );
 	wp_cache_flush();
