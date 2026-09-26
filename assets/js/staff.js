@@ -1,4 +1,4 @@
-/* RAR Woo Stock & Order — staff app v1.2.0 */
+/* RAR Woo Stock & Order — staff app v1.3.0 */
 (() => {
 'use strict';
 
@@ -35,11 +35,12 @@ function money(value) {
 function moneyShort(v) {
     const sym = String(C.currency || ''), n = Number(v || 0);
     if (n >= 1e7) return sym + (n / 1e7).toFixed(2) + ' Cr';
-    if (n >= 1e5) return sym + (n / 1e5).toFixed(n >= 1e6 ? 1 : 2) + 'L';
+    if (n >= 1e5) return sym + (n / 1e5).toFixed(n >= 1e6 ? 1 : 2) + ' L';
     if (n >= 1e3) return sym + (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + 'k';
     return sym + Math.round(n);
 }
-const moneyCard = v => Number(v) >= 1e6 ? moneyShort(v) : money(v);
+/* Card figures stay on one line on every screen: whole taka, lakh / crore above ৳1,00,000 (exact amount in the tooltip and lists). */
+const moneyCard = v => { const n = Number(v || 0); if (n >= 1e5) return moneyShort(n); const sym = String(C.currency || ''), a = fmtNum(n, 0); switch (String(C.currencyPosition || 'left')) { case 'right': return a + sym; case 'left_space': return sym + ' ' + a; case 'right_space': return a + ' ' + sym; default: return sym + a; } };
 function pct(cur, prev) { return prev ? Math.round((cur - prev) / prev * 100) : null; }
 function delta(cur, prev, goodUp = true) {
     const p = pct(cur, prev);
@@ -235,17 +236,27 @@ async function refreshNonce() {
     }
     return refreshing;
 }
+/* A request that hangs (weak mobile signal, busy server) is stopped and reported instead of spinning forever. */
+const TIMEOUT_MS = { create_order:45000, stock_bulk:45000, report:40000 };
 async function api(action, data = {}, retried = false) {
     const body = new URLSearchParams({ action:'rar_wso_' + action, nonce:C.nonce });
     Object.entries(data).forEach(([k, v]) => { if (v !== undefined && v !== null) body.append(k, typeof v === 'object' ? JSON.stringify(v) : String(v)); });
-    let response;
+    const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = ctl ? setTimeout(() => ctl.abort(), TIMEOUT_MS[action] || 25000) : null;
+    let response, json = null, text = '';
     try {
-        response = await fetch(C.ajaxUrl, { method:'POST', credentials:'same-origin', cache:'no-store', headers:{ 'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8' }, body });
+        response = await fetch(C.ajaxUrl, { method:'POST', credentials:'same-origin', cache:'no-store', headers:{ 'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8' }, body, signal:ctl ? ctl.signal : undefined });
+        text = await response.text();
     } catch (e) {
-        throw new Error(navigator.onLine === false ? 'No internet connection. Check Wi-Fi / mobile data and try again.' : 'Could not reach the server. Try again.');
+        clearTimeout(timer);
+        const err = new Error(e && e.name === 'AbortError'
+            ? (action === 'create_order' ? 'Server is slow to answer. Tap Save again — the same order will not be created twice.' : 'Server is slow to answer. Please try again.')
+            : navigator.onLine === false ? 'No internet connection. Check Wi-Fi / mobile data and try again.' : 'Could not reach the server. Try again.');
+        err.network = true;
+        throw err;
     }
-    let json = null, text = '';
-    try { text = await response.text(); json = JSON.parse(text); } catch (_) { json = null; }
+    clearTimeout(timer);
+    try { json = JSON.parse(text); } catch (_) { json = null; }
     const expired = response.status === 403 && (text.trim() === '-1' || (json && json.data && json.data.nonce));
     const loggedOut = response.status === 401 || (response.status === 400 && text.trim() === '0');
     if ((expired || loggedOut) && !retried) {
@@ -256,7 +267,11 @@ async function api(action, data = {}, retried = false) {
     }
     if (loggedOut) { needLogin(); throw new Error('Your login has ended. Please sign in again.'); }
     if (!json) throw new Error('Invalid server response (' + response.status + '). Try again.');
-    if (!response.ok || !json.success) throw new Error(json?.data?.message || 'Request failed.');
+    if (!response.ok || !json.success) {
+        const err = new Error(json?.data?.message || 'Request failed.');
+        err.status = response.status; err.data = (json && json.data) || {};
+        throw err;
+    }
     return json.data;
 }
 
@@ -300,7 +315,7 @@ function renderKPIs() {
     const p = S.stats.period, c = p.cur, pv = p.prev, L = PLABEL[S.period];
     box.innerHTML = [
         card({ key:'k-orders', hue:'--c-orders', icon:'orders', label:L.orders, num:fmtNum(c.orders, 0), sub:`${delta(c.orders, pv.orders)}${esc(p.vs)}: ${fmtNum(pv.orders, 0)}`, click:canOrders }),
-        card({ key:'k-sales', hue:'--c-sales', icon:'taka', label:L.sales, num:esc(moneyCard(c.sales)), sub:`${delta(c.sales, pv.sales)}avg order ${esc(money(c.avg))}`, click:canOrders }),
+        card({ key:'k-sales', hue:'--c-sales', icon:'taka', label:L.sales, num:`<span title="${esc(money(c.sales))}">${esc(moneyCard(c.sales))}</span>`, sub:`${delta(c.sales, pv.sales)}avg order ${esc(money(c.avg))}`, click:canOrders }),
         card({ key:'k-done', hue:'--c-done', icon:'check', label:L.done, num:fmtNum(c.completed, 0), sub:`${c.orders ? Math.round(c.completed / c.orders * 100) : 0}% of ${S.period === 'today' ? "today's" : 'these'} orders`, click:canOrders }),
         card({ key:'k-ret', hue:'--c-return', icon:'ret', label:L.ret, num:fmtNum(c.cancelled + c.returned, 0), sub:`${c.cancelled} cancelled · ${c.returned} returned/refunded`, click:canOrders }),
     ].join('');
@@ -314,7 +329,7 @@ function renderStockCards() {
         card({ key:'s-all', hue:'--c-allstock', icon:'boxes', label:'All Stock', wide:true, num:`${fmtNum(s.all, 0)}<small>products</small>`,
             extra:`<span class="dist" aria-hidden="true">${seg('ok', s.ok)}${seg('low', s.low)}${seg('out', s.out)}${seg('untracked', s.untracked)}</span>
             <span class="dist-lg"><span><i class="dot lv-ok"></i><b>${s.ok}</b> ${THRESHOLD}+</span><span><i class="dot lv-low"></i><b>${s.low}</b> low</span><span><i class="dot lv-out"></i><b>${s.out}</b> out</span>${s.untracked ? `<span><i class="dot lv-untracked"></i><b>${s.untracked}</b> not tracked</span>` : ''}</span>`,
-            sub:`${qtyFmt(s.units)} units in hand · stock value ${esc(moneyShort(s.value))}` }),
+            sub:`${qtyFmt(s.units)} units in hand · value at sale price ${esc(moneyShort(s.value))}` }),
         card({ key:'s-live', hue:'--c-live', icon:'pulse', label:'Available / Live Stock', num:`${fmtNum(s.live, 0)}<small>products</small>`,
             sub:`<span class="lg"><i class="dot lv-ok"></i>${s.ok} healthy</span><span class="lg"><i class="dot lv-low"></i>${s.low} low</span>` }),
         card({ key:'s-out', hue:'--c-out', icon:'ban', label:'Out of Stock', num:`${fmtNum(s.out, 0)}<small>products</small>`,
@@ -360,6 +375,7 @@ function renderAttention() {
     const names = list => (list || []).map(x => shortName(x.name)).join(', ');
     if (s.low) rows.push({ tone:'low', n:s.low, t:`${s.low} products running low (1–${THRESHOLD})`, sub:names(S.stats.low_names), open:'att-low' });
     if (s.out) rows.push({ tone:'out', n:s.out, t:`${s.out} products out of stock`, sub:names(S.stats.out_names), open:'s-out' });
+    if (s.negative) rows.push({ tone:'out', n:s.negative, t:`${s.negative} products show negative stock`, sub:'বিক্রি রেকর্ডের চেয়ে বেশি — recount করে Stock Manager-এ ঠিক করুন', open:'s-out' });
     if (MANAGER && S.stats.manager) {
         const m = S.stats.manager;
         if (m.stale) rows.push({ tone:'warn', n:m.stale, t:`${m.stale} live orders waiting 24h+`, sub:m.oldest_live ? `Oldest waiting ${waitFor(m.oldest_live * 1000)}` : '', open:'att-stale' });
@@ -450,7 +466,7 @@ function renderGrowth() {
     const maxCh = Math.max(1, ...(R.channels || []).map(t => t.sales));
     box.innerHTML = `<div class="growth">
         <div class="g-kpis">
-            <div class="g-kpi"><span>Sales · ${R.days} days</span><b>${esc(moneyCard(c.sales))}</b>${g(c.sales, p.sales)}</div>
+            <div class="g-kpi"><span>Sales · ${R.days} days</span><b>${esc(moneyCard(c.sales))}</b>${g(c.sales, p.sales)}${c.shipping ? `<small>incl. ${esc(moneyShort(c.shipping))} delivery charges</small>` : ''}</div>
             <div class="g-kpi"><span>Orders</span><b>${fmtNum(c.orders, 0)}</b>${g(c.orders, p.orders)}</div>
             <div class="g-kpi"><span>Average order</span><b>${esc(money(c.avg))}</b>${g(c.avg, p.avg)}</div>
             <div class="g-kpi"><span>Items sold</span><b>${qtyFmt(R.items || 0)}</b><small>${c.cancelled + c.returned} cancelled / returned</small></div>
@@ -507,11 +523,26 @@ if (E.close) E.close.innerHTML = ICON.x;
 const stack = []; let lastFocus = null;
 const top = () => stack[stack.length - 1];
 const isTop = v => top() === v;
+/* Phone back button / back gesture closes the panel instead of leaving the app:
+   one history entry is added while a panel is open and consumed by the back action. */
+let histOn = false, skipPop = 0;
+function histEnter() { if (histOn) return; try { history.pushState({ rarSheet:1 }, ''); histOn = true; } catch (_) {} }
+function histLeave() { if (!histOn) return; histOn = false; skipPop++; try { history.back(); } catch (_) { skipPop--; } }
+addEventListener('popstate', () => {
+    if (skipPop) { skipPop--; return; }
+    if (!histOn) return;
+    histOn = false;
+    if (!E.wrap || E.wrap.hidden) return;
+    const v = top();
+    if (v && v.dirty && v.dirty() && !v.confirmClose) { histEnter(); v.confirmClose = true; v.backIntent = stack.length > 1; drawFoot(); const b = E.foot.querySelector('[data-act="keep"]'); if (b) b.focus(); return; }
+    if (stack.length > 1) { histEnter(); goBack(); } else closeSheet(true);
+});
 function openView(v, push) {
     if (!E.wrap) return;
     if (!push) { stack.length = 0; lastFocus = document.activeElement; }
     stack.push(v);
     if (E.wrap.hidden) { E.wrap.hidden = false; document.documentElement.classList.add('sheet-open'); setTimeout(() => E.close.focus(), 30); }
+    histEnter();
     drawView(true);
     if (v.fetch) v.fetch(true);
 }
@@ -544,7 +575,8 @@ function drawFoot() {
     E.foot.hidden = !has;
     document.documentElement.style.setProperty('--foot-h', has ? E.foot.offsetHeight + 'px' : '0px');
 }
-function closeSheet() {
+function closeSheet(fromHistory) {
+    if (fromHistory !== true) histLeave();
     E.wrap.hidden = true; document.documentElement.classList.remove('sheet-open');
     stack.length = 0;
     loadStats();
@@ -564,7 +596,18 @@ if (E.close) {
         if (v && v.dirty && v.dirty() && !v.confirmClose) { v.confirmClose = true; v.backIntent = true; drawFoot(); return; }
         goBack();
     });
-    document.addEventListener('keydown', e => { if (e.key === 'Escape' && !E.wrap.hidden) requestClose(); });
+    document.addEventListener('keydown', e => {
+        if (E.wrap.hidden) return;
+        if (e.key === 'Escape') { requestClose(); return; }
+        if (e.key !== 'Tab') return;
+        // Keep keyboard focus inside the open panel.
+        const f = $$('button:not([disabled]),[href],input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])', E.sheet).filter(x => x.offsetParent !== null);
+        if (!f.length) return;
+        const first = f[0], last = f[f.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    });
+    addEventListener('beforeunload', e => { if (stack.some(x => x.dirty && x.dirty() && !x.autosaved)) { e.preventDefault(); e.returnValue = ''; } });
     document.addEventListener('pointerdown', e => { const v = top(); if (v && v.onOutside && !E.wrap.hidden) v.onOutside(e); }, true);
     const dispatch = (zone, type) => e => {
         const v = top(); if (!v) return;
@@ -573,7 +616,7 @@ if (E.close) {
             if (oo && zone === 'body') { openView(orderView(+oo.dataset.openOrder), true); return; }
             const a = e.target.closest('[data-act]');
             if (a && zone === 'foot' && a.dataset.act === 'keep') { v.confirmClose = false; v.backIntent = false; drawFoot(); return; }
-            if (a && zone === 'foot' && a.dataset.act === 'discard-close') { v.backIntent ? goBack() : closeSheet(); return; }
+            if (a && zone === 'foot' && a.dataset.act === 'discard-close') { if (v.onDiscard) v.onDiscard(); v.confirmClose = false; v.backIntent ? goBack() : closeSheet(); return; }
         }
         if (type === 'change' && zone === 'body') { const s = e.target.closest('[data-status-for]'); if (s) { changeStatus(s); return; } }
         if (type === 'submit') e.preventDefault();
@@ -871,7 +914,7 @@ function slipView(o) {
 const REASONS = ['Restock — new shipment', 'Count correction', 'Damaged / expired', 'Customer return', 'Transfer in', 'Transfer out'];
 function stockView(mode, preset) {
     const T = { all:['All Stock', '--c-allstock', 'boxes'], live:['Available / Live Stock', '--c-live', 'pulse'], out:['Out of Stock', '--c-out', 'ban'], manager:['Stock Manager', '--c-allstock', 'sliders'] }[mode];
-    const v = { mode, title:T[0], hue:T[1], icon:T[2], staged:new Map(), q:'', chip:preset || 'all', cat:0, sort:'qty_asc', tab:'list', reason:REASONS[0],
+    const v = { mode, title:T[0], hue:T[1], icon:T[2], staged:new Map(), origin:new Map(), q:'', chip:preset || 'all', cat:0, sort:'qty_asc', tab:'list', reason:REASONS[0],
         editable:mode !== 'all' && !!C.canStock, items:[], counts:null, total:0, page:1, pages:1, loading:false, error:'', req:0, cats:null, moves:0, log:null };
     v.chipKeys = mode === 'out' ? null : mode === 'live' ? ['all', 'ok', 'low', 'untracked'] : ['all', 'ok', 'low', 'out', 'untracked'];
     v.levelParam = () => mode === 'out' ? 'out' : mode === 'live' ? (v.chip === 'all' ? 'live' : v.chip) : v.chip;
@@ -934,7 +977,7 @@ function stockView(mode, preset) {
     };
     const statsStrip = () => {
         const c = v.counts; if (!c) return '';
-        return `<div class="sstrip"><div><span>Products</span><b>${fmtNum(c.all, 0)}</b></div><div><span>Units in hand</span><b>${qtyFmt(c.units)}</b></div><div><span>Stock value</span><b>${esc(moneyShort(c.value))}</b></div><div><span>Movements today</span><b>${fmtNum(v.moves, 0)}</b></div></div>`;
+        return `<div class="sstrip"><div><span>Products</span><b>${fmtNum(c.all, 0)}</b></div><div><span>Units in hand</span><b>${qtyFmt(c.units)}</b></div><div><span>Value at sale price</span><b>${esc(moneyShort(c.value))}</b></div><div><span>Movements today</span><b>${fmtNum(v.moves, 0)}</b></div></div>`;
     };
     v.body = b => {
         v.drawChips();
@@ -963,32 +1006,50 @@ function stockView(mode, preset) {
     };
     const stage = (p, q, fromInput) => {
         q = Math.max(0, Math.min(9999999, Math.floor(Number(q)) || 0));
-        if (p.stock_qty !== '' && q === Number(p.stock_qty)) v.staged.delete(p.id); else v.staged.set(p.id, q);
+        if (p.stock_qty !== '' && q === Number(p.stock_qty)) { v.staged.delete(p.id); v.origin.delete(p.id); }
+        else { if (!v.origin.has(p.id)) v.origin.set(p.id, p.stock_qty); v.staged.set(p.id, q); }
         v.confirmClose = false; patchStockRow(v, p, fromInput); drawFoot();
     };
-    const replace = prod => { const i = v.items.findIndex(x => x.id === prod.id); if (i >= 0) v.items[i] = prod; };
+    const replace = prod => {
+        if (!prod) return;
+        const i = v.items.findIndex(x => x.id === prod.id); if (i >= 0) v.items[i] = prod;
+        // A staged change now starts from the fresh figure the staff member is looking at.
+        if (v.staged.has(prod.id)) v.origin.set(prod.id, prod.stock_qty);
+        // Variations sharing the parent's stock all show the same new quantity.
+        if (prod.shared_stock) v.items.forEach((x, k) => { if (x.id !== prod.id && x.shared_stock && x.stock_owner === prod.stock_owner) v.items[k] = Object.assign({}, x, { stock_qty:prod.stock_qty, level:prod.level, updated:prod.updated }); });
+    };
+    const conflict = (e, ids) => {
+        if (!(e && e.status === 409 && e.data && e.data.product)) return false;
+        replace(e.data.product); drawBody(false);
+        toast(esc(e.message), { error:true, long:true });
+        return true;
+    };
     const commitOne = async p => {
         const to = v.staged.get(p.id); if (to === undefined) return;
         const from = p.stock_qty, row = E.body.querySelector(`.srow[data-pid="${p.id}"]`);
         row && row.classList.add('saving');
         try {
-            const res = await api('stock_update', { product_id:p.id, qty:to, reason:mode === 'manager' ? v.reason : 'Quick update' });
-            v.staged.delete(p.id); replace(res.product); drawBody(false);
-            toast(`<b>${esc(shortName(p.name))}</b>: ${from === '' ? 'not tracked' : qtyFmt(from)} → ${qtyFmt(to)}`, from === '' ? {} : { action:'Undo', fn:async () => { try { const back = await api('stock_update', { product_id:p.id, qty:from, reason:'Undo' }); replace(back.product); if (isTop(v)) drawBody(false); } catch (e) { fail(e); } } });
-        } catch (e) { row && row.classList.remove('saving'); fail(e); }
+            const res = await api('stock_update', { product_id:p.id, qty:to, expected:from === '' ? '' : from, reason:mode === 'manager' ? v.reason : 'Quick update' });
+            v.staged.delete(p.id); v.origin.delete(p.id); replace(res.product); drawBody(false);
+            toast(`<b>${esc(shortName(p.name))}</b>: ${from === '' ? 'not tracked' : qtyFmt(from)} → ${qtyFmt(to)}`, from === '' ? {} : { action:'Undo', fn:async () => { try { const back = await api('stock_update', { product_id:p.id, qty:from, expected:to, reason:'Undo' }); replace(back.product); if (isTop(v)) drawBody(false); } catch (e) { if (!conflict(e)) fail(e); } } });
+        } catch (e) { row && row.classList.remove('saving'); if (!conflict(e)) fail(e); }
     };
     const commitAll = async () => {
         if (v.saving) return;
-        const items = [...v.staged].map(([id, qty]) => ({ id, qty })), prev = items.map(({ id }) => ({ id, qty:(v.find(id) || {}).stock_qty }));
+        // "expected" = the quantity the change started from, even if the row has since left the list (new search).
+        const items = [...v.staged].map(([id, qty]) => { const p = v.find(id); const from = p ? p.stock_qty : v.origin.get(id); const row = { id, qty }; if (from !== undefined) row.expected = from === '' ? '' : from; return row; });
+        const prev = items.map(({ id, expected }) => ({ id, qty:expected })), sent = new Map(items.map(i => [i.id, i.qty]));
         v.saving = true; drawFoot();
         try {
             const res = await api('stock_bulk', { items, reason:mode === 'manager' ? v.reason : 'Quick update' });
-            res.updated.forEach(p => { replace(p); v.staged.delete(p.id); });
+            res.updated.forEach(p => { v.staged.delete(p.id); v.origin.delete(p.id); replace(p); });
+            (res.errors || []).forEach(x => { if (x.product) replace(x.product); });
             v.confirmClose = false; v.moves += res.updated.length;
             drawBody(false);
-            if (res.errors && res.errors.length) toast(esc(res.errors.map(x => x.message).join(' · ')), { error:true });
-            const undoable = prev.filter(x => x.qty !== '' && x.qty !== undefined);
-            toast(`${toBn(res.updated.length)}টি product-এর stock update হয়েছে`, undoable.length ? { action:'Undo', fn:async () => { try { const back = await api('stock_bulk', { items:undoable, reason:'Undo' }); back.updated.forEach(replace); if (isTop(v)) drawBody(false); } catch (e) { fail(e); } } } : {});
+            if (res.errors && res.errors.length) toast(esc(res.errors.map(x => x.message).join(' · ')), { error:true, long:true });
+            const done = new Set(res.updated.map(p => p.id));
+            const undoable = prev.filter(x => done.has(x.id) && x.qty !== '' && x.qty !== undefined).map(x => ({ id:x.id, qty:x.qty, expected:sent.get(x.id) }));
+            if (res.updated.length) toast(`${toBn(res.updated.length)}টি product-এর stock update হয়েছে`, undoable.length ? { action:'Undo', fn:async () => { try { const back = await api('stock_bulk', { items:undoable, reason:'Undo' }); back.updated.forEach(replace); if (back.errors && back.errors.length) toast(esc(back.errors.map(x => x.message).join(' · ')), { error:true, long:true }); if (isTop(v)) drawBody(false); } catch (e) { fail(e); } } } : {});
         } catch (e) { fail(e); }
         v.saving = false; drawFoot();
     };
@@ -1002,14 +1063,14 @@ function stockView(mode, preset) {
         const q = Number(v.shown(p) === '' ? 0 : v.shown(p)), act = a.dataset.act;
         if (act === 'dec') stage(p, q - 1); else if (act === 'inc') stage(p, q + 1);
         else if (act === 'add5') stage(p, q + 5); else if (act === 'add10') stage(p, q + 10);
-        else if (act === 'reset') { v.staged.delete(p.id); patchStockRow(v, p); drawFoot(); }
+        else if (act === 'reset') { v.staged.delete(p.id); v.origin.delete(p.id); patchStockRow(v, p); drawFoot(); }
         else if (act === 'save') commitOne(p);
     };
     v.on_body_input = e => {
         const inp = e.target.closest('input[data-act="qty"]'); if (!inp) return;
         const p = v.find(+inp.closest('.srow').dataset.pid), raw = fromBn(inp.value).replace(/\D/g, '');
         if (raw !== inp.value) inp.value = raw;
-        if (raw === '') { v.staged.delete(p.id); patchStockRow(v, p, true); drawFoot(); return; }
+        if (raw === '') { v.staged.delete(p.id); v.origin.delete(p.id); patchStockRow(v, p, true); drawFoot(); return; }
         stage(p, parseInt(raw, 10), true);
     };
     v.on_body_focusout = e => { const inp = e.target.closest('input[data-act="qty"]'); if (inp && inp.value === '') { const p = v.find(+inp.closest('.srow').dataset.pid); inp.value = v.shown(p); } };
@@ -1029,21 +1090,21 @@ function stockView(mode, preset) {
     v.on_foot_click = e => {
         const a = e.target.closest('[data-act]'); if (!a) return;
         if (a.dataset.act === 'go-mgr') openView(stockView('manager'), true);
-        else if (a.dataset.act === 'discard') { v.staged.clear(); drawBody(false); }
+        else if (a.dataset.act === 'discard') { v.staged.clear(); v.origin.clear(); drawBody(false); }
         else if (a.dataset.act === 'save-all') commitAll();
     };
     return v;
 }
 function deltaTxt(p, q) {
     const cur = p.stock_qty === '' ? null : Number(p.stock_qty);
-    if (q === '' || q === undefined) return cur === null ? 'not tracked yet' : `value ${esc(money(cur * p.price))}`;
+    if (q === '' || q === undefined) return cur === null ? 'not tracked yet' : cur < 0 ? 'oversold — recount' : `value ${esc(money(cur * p.price))}`;
     const d = q - (cur ?? 0);
-    if (cur !== null && d === 0) return `value ${esc(money(q * p.price))}`;
+    if (cur !== null && d === 0) return cur < 0 ? 'oversold — recount' : `value ${esc(money(q * p.price))}`;
     return `${cur === null ? 'not tracked' : qtyFmt(cur)} → ${qtyFmt(q)}<b class="${d >= 0 ? 'good' : 'bad'}">${d > 0 ? '+' : ''}${qtyFmt(d)}</b>`;
 }
 function stockRow(p, v) {
     const q = v.shown(p), lv = levelOf(p, q), changed = v.staged.has(p.id);
-    const meta = `<span class="lvl lv-${lv}">${LVLABEL[lv]}</span>${p.sku ? `<span class="mono">${esc(p.sku)}</span>` : ''}${p.category ? `<span>${esc(p.category)}</span>` : ''}<span>${esc(money(p.price))}</span>${p.updated ? `<span>updated ${ago(p.updated * 1000)}</span>` : ''}`;
+    const meta = `<span class="lvl lv-${lv}">${q !== '' && Number(q) < 0 ? 'Negative stock' : LVLABEL[lv]}</span>${p.shared_stock ? '<span class="shared" title="Stock is kept on the main product and shared by all its variations">Shared stock · all variations</span>' : ''}${p.sku ? `<span class="mono">${esc(p.sku)}</span>` : ''}${p.category ? `<span>${esc(p.category)}</span>` : ''}<span>${esc(money(p.price))}</span>${p.updated ? `<span>updated ${ago(p.updated * 1000)}</span>` : ''}`;
     const img = `<img src="${esc(p.image)}" alt="" loading="lazy">`;
     if (!v.editable) return `<div class="srow ro lv-${lv}" data-pid="${p.id}">${img}<div class="s-main"><div class="s-name">${esc(p.name)}</div><div class="s-meta">${meta}</div></div><div class="s-qty-ro"><b>${q === '' ? '—' : qtyFmt(q)}</b><small>${q === '' ? 'not tracked' : 'units'}</small></div></div>`;
     return `<div class="srow lv-${lv}${changed ? ' changed' : ''}" data-pid="${p.id}">${img}
@@ -1085,7 +1146,19 @@ function createView() {
         pk:{ open:false, q:'', items:[], page:1, pages:1, loading:false, req:0 }, customer:null, lookupReq:0 };
     const $b = s => E.body.querySelector(s);
     const FIELDS = ['name', 'phone', 'email', 'address', 'district', 'city', 'items'];
-    const changed = () => { v.reqId = ''; v.serverError = ''; };
+    /* Unsaved order draft is kept on this phone, so a call, a reload or a closed app doesn't lose it. */
+    const DKEY = `rarwso-draft-${C.userId || 0}-${location.host}`;
+    const draftLoad = () => { try { const d = JSON.parse(localStorage.getItem(DKEY) || 'null'); return d && d.f && Date.now() - d.at < 2 * DAY ? d : null; } catch (_) { return null; } };
+    const draftClear = () => { try { localStorage.removeItem(DKEY); } catch (_) {} };
+    let draftTimer;
+    const draftSave = (now) => { clearTimeout(draftTimer); const run = () => { if (v.done) return; try { if (v.dirty()) localStorage.setItem(DKEY, JSON.stringify({ at:Date.now(), f:v.f, reqId:v.reqId || '' })); else draftClear(); } catch (_) {} }; if (now) run(); else draftTimer = setTimeout(run, 400); };
+    v.autosaved = true;
+    v.onDiscard = draftClear;
+    const saved = draftLoad();
+    if (saved && (saved.f.name || saved.f.phone || (saved.f.items || []).length)) { v.f = Object.assign(blank(), saved.f); v.restored = saved.at; v.reqId = saved.reqId || ''; }
+    /* The request ID is kept until the order is saved or discarded: if a save timed out but reached
+       the server, pressing Save again (even after edits or an app restart) returns that same order. */
+    const changed = () => { v.serverError = ''; draftSave(); };
     v.dirty = () => !v.done && !!(v.f.name || v.f.phone || v.f.address || v.f.items.length);
     v.dirtyMsg = () => 'Order এখনো save হয়নি — লেখা তথ্য মুছে যাবে';
     v.sub = () => v.done ? `Order #${v.done.number} saved · slip ready` : 'Phone, Facebook, WhatsApp বা walk-in order';
@@ -1115,7 +1188,8 @@ function createView() {
         const f = v.f, sub = sum(f.items, i => i.qty * i.price), raw = parseFloat(fromBn(f.discount).replace(/[^\d.]/g, '') || '0') || 0;
         const d = f.discType === 'percent' ? Math.round(sub * Math.min(raw, 100) / 100 * 100) / 100 : Math.min(raw, sub);
         const ship = parseFloat(f.ship || '0') || 0;
-        return { sub, d, ship, tot:Math.max(0, sub - d + ship), units:sum(f.items, i => i.qty) };
+        const list = sum(f.items, i => i.qty * Number(i.list ?? i.price)), cut = Math.max(0, list - sub) + d;
+        return { sub, d, ship, tot:Math.max(0, sub - d + ship), units:sum(f.items, i => i.qty), list, cut, cutPct:list > 0 ? cut / list * 100 : 0, lowered:f.items.some(i => i.price < Number(i.list ?? i.price) - 0.0001) };
     };
     const updateTotals = () => {
         const c = calc(), set = (s, txt) => { const n = $b(s); if (n) n.textContent = txt; };
@@ -1214,12 +1288,13 @@ function createView() {
         }).join('') + (v.pk.page < v.pk.pages ? `<div class="pk-more"><button type="button" class="btn btn-sm" data-act="pk-more">${v.pk.loading ? '<span class="spin"></span>' : ''}Show more products</button></div>` : '')
             : '<div class="empty" style="padding:24px 12px">কোনো product পাওয়া যায়নি</div>';
     };
+    const belowTxt = i => { const l = Number(i.list ?? i.price); return l > 0 && i.price < l - 0.0001 ? `list ${esc(money(l))} · −${Math.round((l - i.price) / l * 100)}%` : ''; };
     const renderItems = () => {
         const box = $b('#coItems'); if (!box) return;
         box.innerHTML = v.f.items.length ? `<div class="items"><div class="it-head" aria-hidden="true"><span>Sl</span><span>Item</span><span>Qty</span><span class="r">Amount</span><span></span></div>${v.f.items.map((i, n) => {
             const over = i.max !== null && !i.backorders && i.qty > i.max;
             return `<div class="it${over ? ' over' : ''}" data-pid="${i.pid}"><span class="it-sl">${n + 1}</span>
-                <div class="it-main"><b>${esc(i.name)}</b><span class="it-meta">${C.allowPrice ? `<label class="sr" for="ip-${i.pid}">Rate</label><input type="text" inputmode="decimal" id="ip-${i.pid}" data-act="iprice" value="${esc(String(i.price))}">each` : `${esc(money(i.price))} each`}<span>· stock ${i.max === null ? 'not tracked' : qtyFmt(i.max)}</span>${over ? `<em>— stock-এ আছে মাত্র ${toBn(i.max)}টি</em>` : ''}</span></div>
+                <div class="it-main"><b>${esc(i.name)}</b><span class="it-meta">${C.allowPrice ? `<label class="sr" for="ip-${i.pid}">Rate</label><input type="text" inputmode="decimal" id="ip-${i.pid}" data-act="iprice" value="${esc(String(i.price))}">each` : `${esc(money(i.price))} each`}<span>· stock ${i.max === null ? 'not tracked' : qtyFmt(i.max)}</span>${over ? `<em>— stock-এ আছে মাত্র ${toBn(i.max)}টি</em>` : ''}<span class="below" data-below="${i.pid}">${belowTxt(i)}</span></span></div>
                 <div class="stepper sm"><button type="button" data-act="idec" aria-label="Decrease">${ICON.minus}</button><input type="text" inputmode="numeric" id="iq-${i.pid}" data-act="iqty" value="${i.qty}" aria-label="Quantity of ${esc(i.name)}"><button type="button" data-act="iinc" aria-label="Increase">${ICON.plus}</button></div>
                 <b class="it-line">${esc(money(i.qty * i.price))}</b><button type="button" class="icon-btn sm" data-act="irm" aria-label="Remove ${esc(i.name)}">${ICON.trash}</button></div>`;
         }).join('')}</div>` : '<p class="it-empty">উপরের <b>Search products</b>-এ চাপ দিয়ে product add করুন</p>';
@@ -1231,7 +1306,7 @@ function createView() {
         if (it) {
             if (it.max !== null && !it.backorders && it.qty >= it.max) { toast(`${esc(shortName(p.name))} — stock-এ আছে মাত্র ${toBn(it.max)}টি`); return; }
             it.qty++;
-        } else v.f.items.push({ pid, name:p.name, price:Number(p.price), qty:1, max, backorders:!!p.backorders });
+        } else v.f.items.push({ pid, name:p.name, price:Number(p.list_price ?? p.price), list:Number(p.list_price ?? p.price), qty:1, max, backorders:!!p.backorders });
         changed(); renderItems(); pkDraw(); updateTotals(); if (v.tried) show('items');
     };
 
@@ -1244,7 +1319,7 @@ function createView() {
         }
         const f = v.f, now = Date.now();
         v.cb.district.q = f.district; v.cb.city.q = f.city; v.cb.district.open = v.cb.city.open = false;
-        b.innerHTML = `${v.serverError ? `<p class="form-error" role="alert">${esc(v.serverError)}</p>` : ''}<form class="co" id="coForm" novalidate>
+        b.innerHTML = `${v.serverError ? `<p class="form-error" role="alert">${esc(v.serverError)}</p>` : ''}${v.restored ? `<div class="draft-note" role="status"><span>আগের অসমাপ্ত order ফিরিয়ে আনা হয়েছে · ${esc(when(v.restored))}</span><button type="button" data-act="draft-drop">Discard</button></div>` : ''}<form class="co" id="coForm" novalidate>
             <div class="co-meta"><div><span>Order No</span><b>Auto</b><small>save হলে নম্বর বসবে</small></div><div><span>Date</span><b>${md(now)}, ${zp(now).y}</b><small>${hm(now)} · auto</small></div><div><span>Created by</span><b>${esc(C.userName || '')}</b><small>${esc(C.roleLabel || '')}</small></div></div>
             <section class="fsec"><h4>Customer Details <small>* চিহ্নিত ঘর বাধ্যতামূলক</small></h4>
                 <div class="frow two">
@@ -1295,19 +1370,22 @@ function createView() {
         }
         const f = v.f, c = calc();
         const maxPct = Number(C.maxDiscount ?? 100);
-        if (c.d > 0 && c.sub > 0 && c.d / c.sub * 100 > maxPct + 0.001) {
-            const el = $b('#coDisc'); if (el) { el.scrollIntoView({ block:'center', behavior:'smooth' }); el.focus({ preventScroll:true }); }
-            toast(maxPct <= 0 ? 'আপনার account থেকে discount দেওয়া যাবে না — Shop Manager-কে বলুন' : `Discount সর্বোচ্চ ${toBn(maxPct)}% (${esc(money(Math.floor(c.sub * maxPct) / 100))}) দেওয়া যাবে`, { error:true, long:true });
+        if (c.cut > 0.0001 && c.list > 0 && c.cutPct > maxPct + 0.001) {
+            const el = $b(c.lowered ? '[data-act="iprice"]' : '#coDisc'); if (el) { el.scrollIntoView({ block:'center', behavior:'smooth' }); el.focus({ preventScroll:true }); }
+            toast(maxPct <= 0 ? 'আপনার account থেকে discount বা কম rate দেওয়া যাবে না — Shop Manager-কে বলুন'
+                : c.lowered ? `কম rate + discount মিলিয়ে list price থেকে ${toBn(Math.round(c.cutPct))}% কম — আপনার limit ${toBn(maxPct)}% (${esc(money(Math.floor(c.list * maxPct) / 100))})`
+                : `Discount সর্বোচ্চ ${toBn(maxPct)}% (${esc(money(Math.floor(c.list * maxPct) / 100))}) দেওয়া যাবে`, { error:true, long:true });
             return;
         }
         if (!v.reqId) v.reqId = newReqId();
+        draftSave(true);
         const payload = { request_id:v.reqId, name:f.name.trim(), phone:f.phone, email:f.email.trim(), address:f.address.trim(), city:f.city.trim(), district:f.district, note:f.note.trim(),
             shipping:c.ship, discount_type:f.discType, discount:parseFloat(fromBn(f.discount).replace(/[^\d.]/g, '') || '0') || 0, payment:f.pay,
             items:f.items.map(i => ({ id:i.pid, qty:i.qty, price:i.price })) };
         v.saving = true; v.serverError = ''; drawFoot();
         try {
             const res = await api('create_order', { payload });
-            v.done = res.order; v.duplicate = !!res.duplicate; v.reqId = ''; v.confirmClose = false; v.saving = false;
+            v.done = res.order; v.duplicate = !!res.duplicate; v.reqId = ''; v.confirmClose = false; v.saving = false; clearTimeout(draftTimer); draftClear();
             drawBody(true); E.body.scrollTop = 0;
             toast(`Order <b>#${esc(res.order.number)}</b> ${res.duplicate ? 'আগেই save হয়েছিল' : 'saved'} · ${esc(money(res.order.total))} · slip ready`);
             loadStats();
@@ -1341,7 +1419,7 @@ function createView() {
         else if (t.dataset.act === 'iqty' || t.dataset.act === 'iprice') {
             const row = t.closest('.it'), it = product(+row.dataset.pid);
             if (t.dataset.act === 'iqty') { const raw = fromBn(t.value).replace(/\D/g, ''); if (raw !== t.value) t.value = raw; it.qty = parseInt(raw || '0', 10); }
-            else { const raw = fromBn(t.value).replace(/[^\d.]/g, ''); if (raw !== t.value) t.value = raw; it.price = parseFloat(raw || '0') || 0; }
+            else { const raw = fromBn(t.value).replace(/[^\d.]/g, ''); if (raw !== t.value) t.value = raw; it.price = parseFloat(raw || '0') || 0; const bl = row.querySelector('[data-below]'); if (bl) bl.innerHTML = belowTxt(it); }
             const over = it.max !== null && !it.backorders && it.qty > it.max; row.classList.toggle('over', over);
             row.querySelector('.it-line').textContent = money(it.qty * it.price);
             updateTotals(); if (v.tried) show('items');
@@ -1383,6 +1461,7 @@ function createView() {
         if (v.done && slipActions(e, v.done)) return;
         const a = e.target.closest('[data-act]'); if (!a) return;
         const act = a.dataset.act, row = a.closest('.it'), it = row ? product(+row.dataset.pid) : null;
+        if (act === 'draft-drop') { draftClear(); v.restored = 0; v.reqId = ''; v.f = blank(); v.touched = {}; v.tried = false; v.customer = null; drawView(true); return; }
         if (act === 'pk-done') { v.pk.open = false; pkDraw(); }
         else if (act === 'pk-more') { v.pk.page++; pkFetch(false); }
         else if (act === 'dt') { v.f.discType = a.dataset.dt; E.body.querySelectorAll('[data-act="dt"]').forEach(x => x.setAttribute('aria-pressed', String(x === a))); changed(); updateTotals(); }
@@ -1400,6 +1479,7 @@ function createView() {
         }
         else if (act === 'view') openView(orderView(v.done.id), true);
         else if (act === 'again') {
+            draftClear(); v.restored = 0; v.reqId = '';
             v.f = blank(); v.touched = {}; v.tried = false; v.done = null; v.duplicate = false; v.customer = null; v.pk = { open:false, q:'', items:[], page:1, pages:1, loading:false, req:0 };
             drawView(true); setTimeout(() => { const n = $b('#coName'); if (n) n.focus(); }, 30);
         }

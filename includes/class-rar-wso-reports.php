@@ -24,7 +24,14 @@ class RAR_WSO_Reports {
         add_action( 'woocommerce_refund_deleted', array( __CLASS__, 'bust' ) );
     }
 
+    private static $busted = false;
+
+    /** One write per request, even though a checkout fires several order hooks. */
     public static function bust() {
+        if ( self::$busted ) {
+            return;
+        }
+        self::$busted = true;
         update_option( 'rar_wso_report_ver', (string) microtime( true ), false );
     }
 
@@ -97,13 +104,16 @@ class RAR_WSO_Reports {
         if ( self::hpos() ) {
             $orders = \Automattic\WooCommerce\Utilities\OrderUtil::get_table_for_orders();
             $ops    = $wpdb->prefix . 'wc_order_operational_data';
-            $sql    = "SELECT o.id, o.status, o.total_amount AS total, o.date_created_gmt AS created, o.payment_method_title AS payment, op.created_via AS via
+            $sql    = "SELECT o.id, o.status, o.total_amount AS total, o.date_created_gmt AS created, o.payment_method_title AS payment, op.created_via AS via,
+                    op.shipping_total_amount AS shipping
                 FROM {$orders} o LEFT JOIN {$ops} op ON op.order_id = o.id
                 WHERE o.type = 'shop_order' AND o.status <> 'trash' AND o.date_created_gmt >= %s AND o.date_created_gmt <= %s";
         } else {
-            $sql = "SELECT p.ID AS id, p.post_status AS status, mt.meta_value AS total, p.post_date_gmt AS created, mp.meta_value AS payment, mv.meta_value AS via
+            $sql = "SELECT p.ID AS id, p.post_status AS status, mt.meta_value AS total, p.post_date_gmt AS created, mp.meta_value AS payment, mv.meta_value AS via,
+                    ms.meta_value AS shipping
                 FROM {$wpdb->posts} p
                 LEFT JOIN {$wpdb->postmeta} mt ON mt.post_id = p.ID AND mt.meta_key = '_order_total'
+                LEFT JOIN {$wpdb->postmeta} ms ON ms.post_id = p.ID AND ms.meta_key = '_order_shipping'
                 LEFT JOIN {$wpdb->postmeta} mp ON mp.post_id = p.ID AND mp.meta_key = '_payment_method_title'
                 LEFT JOIN {$wpdb->postmeta} mv ON mv.post_id = p.ID AND mv.meta_key = '_created_via'
                 WHERE p.post_type = 'shop_order' AND p.post_status NOT IN ('trash','auto-draft') AND p.post_date_gmt >= %s AND p.post_date_gmt <= %s";
@@ -125,6 +135,7 @@ class RAR_WSO_Reports {
                 'total'   => $gross - $refunded, // net of partial refunds
                 'gross'   => $gross,
                 'refunded' => $refunded,
+                'shipping' => (float) ( $r['shipping'] ?? 0 ),
                 'time'    => strtotime( $r['created'] . ' UTC' ),
                 'payment' => (string) $r['payment'],
                 'via'     => (string) $r['via'],
@@ -179,13 +190,14 @@ class RAR_WSO_Reports {
 
     /** @return array<string, float|int> */
     public static function summarize( $rows ) {
-        $s = array( 'orders' => 0, 'sales' => 0.0, 'gross' => 0.0, 'refunds' => 0.0, 'sale_orders' => 0, 'completed' => 0, 'cancelled' => 0, 'returned' => 0, 'failed' => 0, 'pending' => 0 );
+        $s = array( 'orders' => 0, 'sales' => 0.0, 'gross' => 0.0, 'refunds' => 0.0, 'shipping' => 0.0, 'sale_orders' => 0, 'completed' => 0, 'cancelled' => 0, 'returned' => 0, 'failed' => 0, 'pending' => 0 );
         foreach ( $rows as $r ) {
             $s['orders']++;
             if ( self::is_sale( $r['status'] ) ) {
                 $s['sales']   += $r['total'];
                 $s['gross']   += $r['gross'] ?? $r['total'];
                 $s['refunds'] += $r['refunded'] ?? 0;
+                $s['shipping'] += $r['shipping'] ?? 0;
                 $s['sale_orders']++;
             } elseif ( in_array( $r['status'], self::UNCONFIRMED_STATUSES, true ) ) {
                 $s['pending']++;

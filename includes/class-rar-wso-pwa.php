@@ -4,6 +4,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 class RAR_WSO_PWA {
+    /** Per-response nonce for the Content-Security-Policy (only our own inline scripts run). */
+    private $csp_nonce = '';
+
     public function __construct() {
         add_action( 'init', array( $this, 'rewrites' ) );
         add_filter( 'query_vars', array( $this, 'query_vars' ) );
@@ -80,6 +83,18 @@ class RAR_WSO_PWA {
         }
     }
 
+    private function nonce() {
+        if ( '' === $this->csp_nonce ) {
+            $this->csp_nonce = rtrim( strtr( base64_encode( random_bytes( 18 ) ), '+/', '-_' ), '=' );
+        }
+        return $this->csp_nonce;
+    }
+
+    /** nonce="…" attribute for inline / own script tags. */
+    private function nonce_attr() {
+        return ' nonce="' . esc_attr( $this->nonce() ) . '"';
+    }
+
     /** Set no-cache / no-optimize flags before cache and optimizer plugins start output buffering. */
     public function early_flags() {
         foreach ( array( 'rar_wso_app', 'rar_wso_manifest', 'rar_wso_sw', 'rar_wso_offline' ) as $var ) {
@@ -129,6 +144,25 @@ class RAR_WSO_PWA {
         $login    = isset( $_POST['log'] ) ? sanitize_user( wp_unslash( $_POST['log'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Missing
         $password = isset( $_POST['pwd'] ) ? (string) wp_unslash( $_POST['pwd'] ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
 
+        // Bot trap: a hidden field people never fill in.
+        if ( ! empty( $_POST['rar_wso_website'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing
+            RAR_WSO_Security::record_failure( $login );
+            return __( 'Login failed. Please try again.', 'rar-woo-stock-order' );
+        }
+
+        // Login CSRF protection. The form is never cached, so the token is always fresh.
+        $token = isset( $_POST['rar_wso_login_nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['rar_wso_login_nonce'] ) ) : '';
+        if ( ! wp_verify_nonce( $token, 'rar_wso_login' ) ) {
+            return __( 'The login page was open too long. Please enter your password again.', 'rar-woo-stock-order' );
+        }
+
+        $wait = RAR_WSO_Security::locked_minutes( $login );
+        if ( $wait ) {
+            status_header( 429 );
+            /* translators: %d minutes */
+            return sprintf( _n( 'Too many wrong passwords. Try again in %d minute, or ask your Shop Manager for a new password link.', 'Too many wrong passwords. Try again in %d minutes, or ask your Shop Manager for a new password link.', $wait, 'rar-woo-stock-order' ), $wait );
+        }
+
         if ( '' === $login || '' === $password ) {
             return __( 'Enter your username and password.', 'rar-woo-stock-order' );
         }
@@ -144,6 +178,9 @@ class RAR_WSO_PWA {
 
         if ( is_wp_error( $user ) ) {
             $code = $user->get_error_code();
+            if ( 'rar_wso_paused' !== $code ) {
+                RAR_WSO_Security::record_failure( $login );
+            }
             if ( in_array( $code, array( 'invalid_username', 'invalid_email', 'incorrect_password', 'empty_username', 'empty_password' ), true ) ) {
                 return __( 'Wrong username or password. Please try again.', 'rar-woo-stock-order' );
             }
@@ -151,6 +188,7 @@ class RAR_WSO_PWA {
             return '' !== $message ? $message : __( 'Login failed. Please try again.', 'rar-woo-stock-order' );
         }
 
+        RAR_WSO_Security::clear_failures( $login );
         wp_safe_redirect( RAR_WSO_Plugin::staff_url() );
         exit;
     }
@@ -212,6 +250,7 @@ class RAR_WSO_PWA {
 
         $this->no_page_cache();
         header( 'Content-Type: application/manifest+json; charset=utf-8' );
+        header( 'X-Content-Type-Options: nosniff' );
 
         echo wp_json_encode(
             array(
@@ -248,6 +287,7 @@ class RAR_WSO_PWA {
         $this->bypass_output_buffers();
         $this->no_page_cache();
         header( 'Content-Type: application/javascript; charset=utf-8' );
+        header( 'X-Content-Type-Options: nosniff' );
         header( 'Service-Worker-Allowed: /' );
 
         $staff_path = trailingslashit( wp_parse_url( RAR_WSO_Plugin::staff_url(), PHP_URL_PATH ) );
@@ -312,6 +352,7 @@ self.addEventListener('fetch', e => {
         $this->bypass_output_buffers();
         header( 'Content-Type: text/html; charset=utf-8' );
         header( 'Cache-Control: public, max-age=86400' );
+        RAR_WSO_Security::send_headers( $this->nonce() );
         $settings = RAR_WSO_Plugin::settings();
         ?>
 <!doctype html>
@@ -324,9 +365,9 @@ self.addEventListener('fetch', e => {
     <div class="rar-kicker">OFFLINE</div>
     <h1>ইন্টারনেট সংযোগ নেই</h1>
     <p>No internet connection. Check Wi-Fi or mobile data, then try again.</p>
-    <button type="button" class="rar-primary" onclick="location.reload()">Try again</button>
+    <button type="button" class="rar-primary" id="rar-retry">Try again</button>
 </div>
-<script data-no-optimize="1" data-cfasync="false">addEventListener('online',function(){location.reload();});</script>
+<script data-no-optimize="1" data-cfasync="false"<?php echo $this->nonce_attr(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>>document.getElementById('rar-retry').addEventListener('click',function(){location.reload();});addEventListener('online',function(){location.reload();});</script>
 </body>
 </html>
         <?php
@@ -353,6 +394,7 @@ self.addEventListener('fetch', e => {
         }
 
         $this->bypass_output_buffers();
+        RAR_WSO_Security::send_headers( $this->nonce() );
 
         if ( ! is_user_logged_in() ) {
             $this->login_screen( $login_error );
@@ -405,6 +447,7 @@ self.addEventListener('fetch', e => {
             'slipFooter'       => (string) $settings['slip_footer'],
             'site'             => wp_parse_url( home_url( '/' ), PHP_URL_HOST ),
             'userName'         => $user->display_name,
+            'userId'           => (int) $user->ID,
             'roleLabel'        => $manager ? __( 'Shop Manager', 'rar-woo-stock-order' ) : __( 'Staff', 'rar-woo-stock-order' ),
             'adminOrdersUrl'   => current_user_can( 'manage_woocommerce' ) ? admin_url( 'admin.php?page=wc-orders' ) : '',
             'staffUrl'         => RAR_WSO_Plugin::staff_url(),
@@ -517,8 +560,8 @@ self.addEventListener('fetch', e => {
 </div>
 <div class="toasts" id="rar-toasts" aria-live="polite"></div>
 <noscript><p class="rar-noscript"><?php esc_html_e( 'Please enable JavaScript to use the staff app.', 'rar-woo-stock-order' ); ?></p></noscript>
-<script data-no-optimize="1" data-no-defer="1" data-no-minify="1" data-cfasync="false" data-noptimize="1">window.RARWSO=<?php echo wp_json_encode( $config, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT ); ?>;</script>
-<script data-no-optimize="1" data-no-defer="1" data-no-minify="1" data-cfasync="false" data-noptimize="1" src="<?php echo esc_url( RAR_WSO_URL . 'assets/js/staff.js?ver=' . rawurlencode( RAR_WSO_VERSION ) ); ?>"></script>
+<script data-no-optimize="1" data-no-defer="1" data-no-minify="1" data-cfasync="false" data-noptimize="1"<?php echo $this->nonce_attr(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>>window.RARWSO=<?php echo wp_json_encode( $config, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT ); ?>;</script>
+<script data-no-optimize="1" data-no-defer="1" data-no-minify="1" data-cfasync="false" data-noptimize="1"<?php echo $this->nonce_attr(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?> src="<?php echo esc_url( RAR_WSO_URL . 'assets/js/staff.js?ver=' . rawurlencode( RAR_WSO_VERSION ) ); ?>"></script>
 </body>
 </html>
 <?php
@@ -529,7 +572,7 @@ self.addEventListener('fetch', e => {
         $settings = RAR_WSO_Plugin::settings();
         $action   = RAR_WSO_Plugin::staff_url();
         $user     = isset( $_POST['log'] ) ? sanitize_user( wp_unslash( $_POST['log'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Missing
-        if ( '' !== $error ) {
+        if ( '' !== $error && 429 !== http_response_code() ) {
             status_header( 401 );
         }
         ?>
@@ -548,20 +591,27 @@ self.addEventListener('fetch', e => {
     <?php endif; ?>
     <form method="post" action="<?php echo esc_url( $action ); ?>" id="rar-loginform" autocomplete="on">
         <input type="hidden" name="rar_wso_login" value="1">
+        <?php wp_nonce_field( 'rar_wso_login', 'rar_wso_login_nonce', false ); ?>
+        <p class="rar-hp" aria-hidden="true"><label for="rar_wso_website">Website</label><input type="text" name="rar_wso_website" id="rar_wso_website" value="" tabindex="-1" autocomplete="off"></p>
         <p class="login-username">
             <label for="user_login"><?php esc_html_e( 'Username or Email Address', 'rar-woo-stock-order' ); ?></label>
-            <input type="text" name="log" id="user_login" class="input" value="<?php echo esc_attr( $user ); ?>" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required>
+            <input type="text" name="log" id="user_login" class="input" value="<?php echo esc_attr( $user ); ?>" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required<?php echo '' === $user ? ' autofocus' : ''; ?>>
         </p>
         <p class="login-password">
             <label for="user_pass"><?php esc_html_e( 'Password', 'rar-woo-stock-order' ); ?></label>
-            <input type="password" name="pwd" id="user_pass" class="input" autocomplete="current-password" required>
+            <span class="rar-pass"><input type="password" name="pwd" id="user_pass" class="input" autocomplete="current-password" required<?php echo '' !== $user ? ' autofocus' : ''; ?>><button type="button" class="rar-eye" id="rar-eye" aria-label="<?php esc_attr_e( 'Show password', 'rar-woo-stock-order' ); ?>" aria-pressed="false"><?php esc_html_e( 'Show', 'rar-woo-stock-order' ); ?></button></span>
         </p>
         <p class="login-remember"><label><input name="rememberme" type="checkbox" id="rememberme" value="forever" checked> <?php esc_html_e( 'Keep me signed in on this phone', 'rar-woo-stock-order' ); ?></label></p>
         <p class="login-submit"><input type="submit" name="wp-submit" id="wp-submit" class="button button-primary" value="<?php esc_attr_e( 'Log In', 'rar-woo-stock-order' ); ?>"></p>
     </form>
     <p class="rar-login-alt"><a href="<?php echo esc_url( wp_login_url( RAR_WSO_Plugin::staff_url() ) ); ?>"><?php esc_html_e( 'Having trouble? Use the WordPress login page', 'rar-woo-stock-order' ); ?></a></p>
 </div>
-<script data-no-optimize="1" data-no-defer="1" data-cfasync="false">
+<script data-no-optimize="1" data-no-defer="1" data-cfasync="false"<?php echo $this->nonce_attr(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>>
+(function () {
+    var eye = document.getElementById('rar-eye'), pass = document.getElementById('user_pass'), form = document.getElementById('rar-loginform');
+    if (eye && pass) eye.addEventListener('click', function () { var show = pass.type === 'password'; pass.type = show ? 'text' : 'password'; eye.setAttribute('aria-pressed', String(show)); eye.textContent = show ? <?php echo wp_json_encode( __( 'Hide', 'rar-woo-stock-order' ) ); ?> : <?php echo wp_json_encode( __( 'Show', 'rar-woo-stock-order' ) ); ?>; pass.focus(); });
+    if (form) form.addEventListener('submit', function () { var b = document.getElementById('wp-submit'); if (b) { setTimeout(function () { b.disabled = true; b.value = <?php echo wp_json_encode( __( 'Signing in…', 'rar-woo-stock-order' ) ); ?>; }, 0); } });
+})();
 if ('serviceWorker' in navigator) { addEventListener('load', function () { navigator.serviceWorker.register(<?php echo wp_json_encode( self::sw_url(), JSON_UNESCAPED_SLASHES ); ?>, { scope: <?php echo wp_json_encode( trailingslashit( wp_parse_url( RAR_WSO_Plugin::staff_url(), PHP_URL_PATH ) ), JSON_UNESCAPED_SLASHES ); ?>, updateViaCache: 'none' }).catch(function () {}); }); }
 </script>
 </body>

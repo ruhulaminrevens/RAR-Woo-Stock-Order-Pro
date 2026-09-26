@@ -2,10 +2,10 @@
 Contributors: ruhulaminrevens
 Tags: woocommerce, stock, inventory, pwa, order management, staff
 Requires at least: 6.3
-Tested up to: 7.0
+Tested up to: 7.1
 Requires PHP: 7.4
 Requires Plugins: woocommerce
-Stable tag: 1.2.2
+Stable tag: 1.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -46,6 +46,9 @@ Features:
 
 == Upgrade Notice ==
 
+= 1.3.0 =
+Concurrency, security and staff-account release. Take a backup first. After updating, review WooCommerce > Stock & Order: the Staff discount limit now also covers lower item rates, and staff accounts can be added and paused there.
+
 = 1.2.2 =
 Order and report hardening. After updating, review the new "Staff discount limit" setting (default 20%) under WooCommerce > Stock & Order.
 
@@ -59,6 +62,18 @@ Take a backup, then upload the v1.2.0 ZIP and choose "Replace current with uploa
 If v1.0.0 was installed directly from a GitHub source archive and uses a versioned plugin folder, deactivate/delete the old plugin files first, then install the official v1.1.0 release ZIP. Settings and WooCommerce operational data are preserved.
 
 == Changelog ==
+
+= 1.3.0 =
+* No overselling between staff: per-product stock locks with fresh database reads (load test: 50 units → exactly 50 orders).
+* Truly atomic duplicate-save protection (MySQL named locks).
+* Stock saves refuse to overwrite a newer change (HTTP 409 with the current figure); shared parent stock of variations respected.
+* Orders validated before they are created; the first save is complete, so other plugins never see a ghost or empty order.
+* Lower item rates count toward the staff discount limit.
+* Staff login: CSRF token, bot trap, failed-login limit; strict CSP and anti-framing headers on app screens.
+* Staff can open only recent orders or their own.
+* Staff accounts panel: add (set-password email / one-time link), pause, sign out everywhere, new password link. No staff accounts from public registration.
+* Phone: back button closes panels, Create Order draft autosave, request timeouts, negative-stock flag, no wrapped card figures.
+* Faster dashboard refresh and order creation; 2 fewer queries on every site page.
 
 = 1.2.2 =
 * Atomic duplicate-order protection and persistent request lookup (5 simultaneous saves create 1 order).

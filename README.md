@@ -2,13 +2,13 @@
 
 Mobile-first **WooCommerce stock manager and staff order entry app (PWA)** for teams that work mainly from their phones.
 
-![Version](https://img.shields.io/badge/version-1.2.2-15234a) ![WordPress](https://img.shields.io/badge/WordPress-6.3%2B-21759b) ![WooCommerce](https://img.shields.io/badge/WooCommerce-8.0%2B-7f54b3) ![PHP](https://img.shields.io/badge/PHP-7.4%2B-777bb4)
+![Version](https://img.shields.io/badge/version-1.3.0-15234a) ![WordPress](https://img.shields.io/badge/WordPress-6.3%2B-21759b) ![WooCommerce](https://img.shields.io/badge/WooCommerce-8.0%2B-7f54b3) ![PHP](https://img.shields.io/badge/PHP-7.4%2B-777bb4)
 
 ## ⬇️ Download
 
-### [Download RAR Woo Stock & Order v1.2.2 (ZIP)](https://github.com/ruhulaminrevens/RAR-Woo-Stock-Order-Pro/raw/main/dist/rar-woo-stock-order-v1.2.2.zip)
+### [Download RAR Woo Stock & Order v1.3.0 (ZIP)](https://github.com/ruhulaminrevens/RAR-Woo-Stock-Order-Pro/raw/main/dist/rar-woo-stock-order-v1.3.0.zip)
 
-- **File:** `rar-woo-stock-order-v1.2.2.zip`
+- **File:** `rar-woo-stock-order-v1.3.0.zip`
 - **Install:** WordPress → Plugins → Add New → **Upload Plugin**
 - **Upgrade:** choose **Replace current with uploaded**
 
@@ -23,7 +23,7 @@ Mobile-first **WooCommerce stock manager and staff order entry app (PWA)** for t
 4. **Activate** the plugin.
 5. If you use LiteSpeed Cache: **LiteSpeed Cache → Toolbox → Purge All**.
 6. Check the settings in **WooCommerce → Stock & Order**.
-7. Give staff users this role: **Users → Role → Woo Stock & Order Staff**.
+7. Add staff in **WooCommerce → Stock & Order → Staff accounts** (they get a set-password email). Never let staff sign up themselves.
 
 ## 📱 Installing the app on a phone
 
@@ -36,7 +36,23 @@ Mobile-first **WooCommerce stock manager and staff order entry app (PWA)** for t
 - Long-press the app icon for the **Create Order** and **Stock Manager** shortcuts (Android).
 - The site must be on **HTTPS**, otherwise the phone won't install the app.
 
-## What's new in v1.2.2: order and report hardening
+## What's new in v1.3.0: concurrency, security, staff accounts
+
+| Problem (v1.2.2) | Fix (v1.3.0) |
+|---|---|
+| Two staff could sell the last unit at the same time (stock went negative) | Per-product stock lock + fresh database check. 25 phones rushing 50 units → exactly 50 orders |
+| Lowering the item rate bypassed the 20% discount limit | Lower rates + discount count together toward the limit |
+| A refused order was created and announced to other plugins, then deleted | Everything is checked first; orders are saved complete |
+| A stock save could overwrite a sale that happened meanwhile | Save refused with the current figure (conflict) |
+| Updating a variation broke shared (parent) stock | Parent stock is updated |
+| Staff could read any old order's customer details | Staff see this month / 7 days / their own orders |
+| Staff login: unlimited guesses, no CSRF token | Token, bot trap, lockout after 6 wrong passwords; strict security headers |
+| No way to add/pause staff; staff role could be handed out by sign-up | **Staff accounts** panel; staff role blocked from public registration |
+| Phone back button left the app; half-typed orders were lost | Back closes the panel; order draft autosaves |
+
+Tests: `tests/smoke.php` **72 checks**, HPOS on and off. Full details in [RELEASE_NOTES.md](RELEASE_NOTES.md).
+
+## Earlier in v1.2.2: order and report hardening
 
 | Problem | Fix (v1.2.2) |
 |---|---|
@@ -69,14 +85,14 @@ RAR-Woo-Stock-Order-Pro/
 ├── README.md                          ← this page
 ├── .github/workflows/validate.yml    ← automated checks (CI)
 ├── dist/
-│   └── rar-woo-stock-order-v1.2.2.zip ← installable plugin (download this)
+│   └── rar-woo-stock-order-v1.3.0.zip ← installable plugin (download this)
 ├── rar-woo-stock-order.php            ← plugin source code
 ├── includes/
 ├── assets/ (css, js, icons)
 ├── CHANGELOG.md
 ├── RELEASE_NOTES.md
 ├── readme.txt
-└── tests/smoke.php                    ← runtime tests (33 checks)
+└── tests/smoke.php                    ← runtime tests (72 checks)
 ```
 
 ## What this plugin is for
@@ -173,16 +189,24 @@ Available settings:
 - Staff URL slug
 - Default new order status
 - Allow item-price override
-- Staff discount limit (default 20%; Shop Managers not limited)
+- Staff discount limit (default 20%; covers discount + lower item rates; Shop Managers not limited)
 - Shipping — Inside Dhaka / Outside Dhaka (auto-filled by district)
 - Default shipping charge
 - Low stock level (default 10)
 - Staff order lists (view only)
 - Business name and footer line on the sales slip
+- Shop Managers may add / pause staff (Administrator only)
 
-Assign staff users from:
+## Staff accounts (no public registration)
 
-**Users → All Users → Role → Woo Stock & Order Staff**
+Staff accounts are created by an Administrator in **WooCommerce → Stock & Order → Staff accounts**:
+
+- **Add staff** — name, username, email. The person gets an email to set their own password; a one-time link (valid 24 hours) is also shown to share on WhatsApp.
+- **Pause / Resume** — a paused account can't sign in anywhere and is signed out on every device.
+- **Sign out everywhere** and **New password link**.
+- **Last active in app** for every staff member.
+
+Public sign-up can never create a staff account: the staff, Shop Manager, Editor and Administrator roles are blocked as the default sign-up role, and a self-registered user that somehow gets one is set back to Customer.
 
 ## Integration Hooks
 
@@ -201,6 +225,10 @@ This keeps RAR Woo Stock & Order focused while allowing other WooCommerce plugin
 
 ## Security & Data Safety
 
+- Per-product stock locks and fresh database reads for order creation and stock saves (no overselling, no lost updates)
+- Staff login form: CSRF token, bot trap, failed-login limit (HTTP 429)
+- Strict Content-Security-Policy (per-response nonce), `X-Frame-Options`, `nosniff`, `Referrer-Policy`, `Permissions-Policy` on app screens
+- Staff order details limited to recent / own orders
 - WordPress nonce on every AJAX request
 - Capability check on every staff action
 - No public inventory/order write endpoint
@@ -214,10 +242,11 @@ This keeps RAR Woo Stock & Order focused while allowing other WooCommerce plugin
 
 ## Compatibility
 
-- WordPress 6.3+ (tested on 7.0.2)
+- WordPress 6.3+ (tested on 7.1.2)
 - Tested with automated runtime tests: HPOS on and legacy order storage
 - WooCommerce 8.0+ (tested on 11.1.2), HPOS supported
 - PHP 7.4+
+- MySQL 5.7+ / MariaDB 10+ recommended (named locks); falls back to a row lock on other databases
 - Works on Hostinger shared hosting (LiteSpeed). Needs no Node.js or extra server software
 
 ## Troubleshooting (phone app)
@@ -228,6 +257,8 @@ This keeps RAR Woo Stock & Order focused while allowing other WooCommerce plugin
 | Old icon or old design still showing | Delete the app from the home screen → LiteSpeed **Purge All** → open `/staff/` in the browser and install again |
 | Login doesn't work (captcha/2FA plugin) | Use the **"Having trouble? Use the WordPress login page"** link below the login form |
 | Page breaks after login (no design, cards stuck loading) | Update to v1.2.1 → **LiteSpeed Cache → Toolbox → Purge All** → close the app completely and open it again. If it's still broken: LiteSpeed Cache → Page Optimization → add `rar-woo-stock-order` to **CSS Excludes** and **JS Excludes** |
+| "Too many wrong passwords" | Wait 15 minutes, or ask an Administrator for a **New password link** (Staff accounts) |
+| "Stock changed … while you were editing" | Someone sold or updated it meanwhile. Check the new figure on the row and save again |
 | `/staff/` shows a 404 | WordPress → **Settings → Permalinks → Save Changes** (without changing anything) |
 
 ## License

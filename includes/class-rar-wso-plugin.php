@@ -14,6 +14,8 @@ final class RAR_WSO_Plugin {
     }
 
     private function __construct() {
+        require_once RAR_WSO_PATH . 'includes/class-rar-wso-lock.php';
+        require_once RAR_WSO_PATH . 'includes/class-rar-wso-security.php';
         require_once RAR_WSO_PATH . 'includes/class-rar-wso-log.php';
         require_once RAR_WSO_PATH . 'includes/class-rar-wso-reports.php';
         require_once RAR_WSO_PATH . 'includes/class-rar-wso-admin.php';
@@ -25,6 +27,7 @@ final class RAR_WSO_Plugin {
         new RAR_WSO_PWA();
         RAR_WSO_Log::hooks();
         RAR_WSO_Reports::hooks();
+        RAR_WSO_Security::hooks();
 
         add_action( 'init', array( $this, 'maybe_upgrade' ), 5 );
         add_filter( 'plugin_action_links_' . plugin_basename( RAR_WSO_FILE ), array( $this, 'plugin_action_links' ) );
@@ -51,6 +54,7 @@ final class RAR_WSO_Plugin {
             'business_name'        => '',
             'slip_footer'          => 'Thank you for shopping with us!',
             'dashboard_title'      => 'Woo Stock & Order',
+            'managers_add_staff'   => 'no',
         );
     }
 
@@ -88,8 +92,8 @@ final class RAR_WSO_Plugin {
         }
         require_once RAR_WSO_PATH . 'includes/class-rar-wso-log.php';
         RAR_WSO_Log::install();
-        update_option( 'rar_wso_version', RAR_WSO_VERSION, false );
-        update_option( 'rar_wso_flush_rewrite', 1, false );
+        update_option( 'rar_wso_version', RAR_WSO_VERSION, true );
+        update_option( 'rar_wso_flush_rewrite', 1, true );
     }
 
     public static function deactivate() {
@@ -115,8 +119,12 @@ final class RAR_WSO_Plugin {
         self::register_roles_and_caps();
         RAR_WSO_Log::install();
         update_option( 'rar_wso_settings', self::settings() );
-        update_option( 'rar_wso_version', RAR_WSO_VERSION, false );
-        update_option( 'rar_wso_flush_rewrite', 1, false );
+        // Read on every page load: keep them in the autoloaded options (no extra query per request).
+        update_option( 'rar_wso_version', RAR_WSO_VERSION, true );
+        update_option( 'rar_wso_flush_rewrite', 1, true );
+        // Locks are MySQL named locks since 1.3.0; remove leftovers of the old option-row locks.
+        global $wpdb;
+        $wpdb->query( "DELETE FROM {$wpdb->options} WHERE option_name LIKE 'rar\\_wso\\_lock\\_%'" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
     }
 
     public static function register_roles_and_caps() {
@@ -156,7 +164,19 @@ final class RAR_WSO_Plugin {
     }
 
     public static function can( $cap ) {
-        return current_user_can( 'manage_woocommerce' ) || current_user_can( $cap );
+        if ( current_user_can( 'manage_woocommerce' ) ) {
+            return true;
+        }
+        return current_user_can( $cap ) && ! RAR_WSO_Security::is_paused( get_current_user_id() );
+    }
+
+    /** Who may add / pause staff accounts from WooCommerce → Stock & Order. */
+    public static function can_manage_staff() {
+        if ( current_user_can( 'create_users' ) && current_user_can( 'promote_users' ) ) {
+            return true;
+        }
+        $settings = self::settings();
+        return 'yes' === $settings['managers_add_staff'] && current_user_can( 'manage_woocommerce' );
     }
 
     /** Shop Manager level: order control, status changes and sales reports. */

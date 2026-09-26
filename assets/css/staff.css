@@ -1,4 +1,4 @@
-/* RAR Woo Stock & Order — staff app v1.2.0 */
+/* RAR Woo Stock & Order — staff app v1.3.0 */
 :root{
   color-scheme:light;
   --font:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans","Noto Sans Bengali","Hind Siliguri",Arial,sans-serif;
@@ -111,7 +111,7 @@ main{padding-block:4px 40px}
 .sec-h h2{margin:0;font-size:17px;font-weight:800;letter-spacing:-.01em;display:flex;align-items:center;gap:10px}
 .badge{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:4px 8px;border-radius:999px;background:color-mix(in srgb,var(--c-processing) 14%,transparent);color:var(--c-processing)}
 .seg{display:flex;padding:3px;border-radius:11px;background:var(--surface);border:1px solid var(--line)}
-.seg button{border:0;background:transparent;padding:6px 12px;border-radius:8px;font-size:13px;font-weight:700;color:var(--ink-2)}
+.seg button{border:0;background:transparent;min-height:36px;padding:6px 12px;border-radius:8px;font-size:13px;font-weight:700;color:var(--ink-2)}
 .seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
 .legend{display:flex;gap:12px;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}
 .legend span{display:inline-flex;align-items:center;gap:6px}
@@ -176,7 +176,7 @@ button.card:hover .c-go{background:var(--c);color:var(--on-c)}
 .p-h{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap}
 .p-h h3{margin:0;font-size:15.5px;font-weight:800}
 .p-h span{font-size:13px;color:var(--muted)}
-.link-btn{border:0;background:none;color:var(--accent);font-weight:700;font-size:13.5px;padding:4px 0}
+.link-btn{border:0;background:none;color:var(--accent);font-weight:700;font-size:13.5px;padding:8px 0;min-height:36px}
 .chart svg{width:100%;height:auto;overflow:visible}
 .chart .g{stroke:var(--line);stroke-width:1}
 .chart .yl,.chart .xl{fill:var(--muted);font-size:11px;font-family:var(--font)}
@@ -276,7 +276,7 @@ textarea{resize:vertical;line-height:1.45}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent)}
 .chips{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;padding-bottom:1px}
 .chips::-webkit-scrollbar{display:none}
-.chip{flex:none;display:inline-flex;align-items:center;gap:7px;padding:7px 12px;border-radius:999px;border:1px solid var(--line-2);background:var(--surface);font-size:13px;font-weight:700;color:var(--ink-2)}
+.chip{flex:none;display:inline-flex;align-items:center;gap:7px;min-height:38px;padding:7px 12px;border-radius:999px;border:1px solid var(--line-2);background:var(--surface);font-size:13px;font-weight:700;color:var(--ink-2)}
 .chip b{font-variant-numeric:tabular-nums;font-weight:800;color:var(--muted)}
 .chip[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:var(--bg)}
 .chip[aria-pressed="true"] b{color:var(--bg);opacity:.75}
@@ -566,3 +566,35 @@ html.rar-standalone body{overscroll-behavior-y:contain}
 .rar-login-alt a{color:var(--muted)}
 .rar-offline p{color:var(--muted)}
 .rar-offline .rar-primary{margin-top:10px}
+
+/* v1.3.0 */
+.wrap{max-width:1280px}
+@media (min-width:1600px){.wrap{max-width:1440px}}
+.sheet{height:calc(100% - 14px - env(safe-area-inset-top,0px))}
+@supports (height:100dvh){@media (max-width:899px){.sheet{height:calc(100dvh - 14px - env(safe-area-inset-top,0px))}}}
+@media (min-width:600px) and (max-width:899px){.kpis{grid-template-columns:repeat(4,minmax(0,1fr))}.quick{grid-template-columns:1fr 1fr}}
+.s-meta .shared{display:inline-flex;align-items:center;padding:2px 7px;border-radius:7px;font-size:11.5px;font-weight:700;background:var(--st-other-bg);color:var(--st-other)}
+.it-meta .below{color:var(--low-ink);font-weight:700}
+.it-meta .below:empty{display:none}
+.draft-note{max-width:760px;margin:0 auto 12px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:10px 14px;border-radius:12px;background:var(--st-processing-bg);color:var(--st-processing);font-size:13.5px;font-weight:600}
+.draft-note button{border:0;background:var(--surface);color:var(--st-processing);font-weight:700;font-size:13px;min-height:34px;padding:0 12px;border-radius:8px}
+.rar-hp{position:absolute!important;left:-10000px!important;width:1px;height:1px;overflow:hidden}
+.rar-pass{position:relative;display:block}
+.rar-pass input{padding-right:74px!important}
+.rar-eye{position:absolute;right:6px;top:50%;transform:translateY(-50%);min-height:36px;padding:0 12px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2);color:var(--ink-2);font-size:13px;font-weight:700;cursor:pointer}
+.rar-login-card .button-primary:disabled{opacity:.7;cursor:progress}
+/* Browsers without color-mix() (older Android WebView / Safari < 16.2): plain, readable fallbacks. */
+@supports not (color:color-mix(in srgb,red 50%,blue)){
+  .card{background:var(--surface);border-color:var(--line)}
+  .sh-head{background:var(--surface);border-bottom-color:var(--line)}
+  .co-meta div,.words{background:var(--surface-2);border-color:var(--line)}
+  .badge{background:var(--st-on-hold-bg);color:var(--st-on-hold)}
+  .c-go{background:var(--surface-2)}
+  .lvl.lv-ok{background:var(--ok-bg)}.lvl.lv-low{background:var(--low-bg)}.lvl.lv-out{background:var(--out-bg)}.lvl.lv-untracked{background:var(--un-bg)}
+  .chart .bar{fill:var(--c-sales);opacity:.45}.chart .bar.today{opacity:1}
+  .chart .area{fill:var(--c-sales);opacity:.14}
+  :focus-visible{outline:3px solid var(--accent)}
+  input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px var(--line-2)}
+}
+.c-num small{display:inline-block;white-space:nowrap}
+.c-num span[title]{cursor:help}

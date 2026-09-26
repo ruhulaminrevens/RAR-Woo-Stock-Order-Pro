@@ -1,5 +1,59 @@
 # Changelog
 
+## 1.3.0 — 2026-09-26
+
+Full audit release: concurrency, security, staff accounts and phone UX. Every defect below was first reproduced on WordPress 7.1.2 + WooCommerce 11.1.2, then fixed and covered by `tests/smoke.php` (72 checks, HPOS on and off).
+
+### Orders and stock (data integrity)
+- **No more overselling between staff.** Two phones selling the last unit at the same moment both succeeded (stock −1). Each product's stock is now locked (MySQL named lock) while it is checked and taken, and the quantity is re-read straight from the database. Load test: 25 phones × 15 s against 50 units → exactly 50 orders, stock 0 (v1.2.2: 55 orders, stock −5).
+- **Duplicate-save lock is truly atomic.** v1.2.2 used `add_option()`, which is `INSERT … ON DUPLICATE KEY UPDATE` and can let two requests through. Replaced by a named lock that is released automatically even if PHP crashes.
+- **Stock saves can't overwrite a newer change.** The app now sends the quantity it was showing; if a sale or another update changed it meanwhile, the save is refused (HTTP 409) with the current figure instead of silently wiping out the other change. Bulk saves report per-row conflicts.
+- **Shared variation stock is respected.** Updating a variation whose stock is kept on the parent product used to convert it into a separately stocked variation. It now updates the shared parent stock.
+- **Stock writes use `wc_update_product_stock()`**: atomic SQL, WooCommerce's out-of-stock threshold, low-stock emails and hooks.
+- **Orders are validated before they exist.** A refused order (e.g. discount over the limit) used to be created, announced to other plugins through `woocommerce_new_order`, then deleted. All checks now run first, and the first save happens with every item, address and total in place — so notification, courier and pixel plugins never see an empty or ghost order.
+- **Stock is taken while locked, emails run after.** Slow SMTP no longer holds other orders.
+- **Re-opening a cancelled order checks stock** before WooCommerce takes it again.
+- Max 100 lines per order and 9,999 per line.
+- Stores that enter prices including tax no longer get tax added twice on staff orders.
+- A failing integration hook after an order is complete no longer deletes the order; a failed order rolls back exactly the stock it took.
+- An order is flagged "stock reduced" only when WooCommerce actually reduced stock.
+- Stock saves explain when shop-wide stock management is switched off instead of pretending to save.
+
+### Security
+- **Price override can't bypass the discount limit.** Staff could sell a ৳1000 item for ৳1. Lower item rates now count toward the Staff discount limit together with the discount (against the list-price subtotal).
+- **Staff login page**: CSRF token, bot trap, and a failed-login limit (6 per account — username and email share one counter — / 10 per IP in 15 minutes → 15-minute lock, HTTP 429). The IP is the server's `REMOTE_ADDR`; behind a proxy/CDN use the `rar_wso_client_ip` filter.
+- **Security headers on app screens**: strict Content-Security-Policy with per-response nonces, `X-Frame-Options`, `frame-ancestors`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener-Policy`.
+- **Staff see only recent orders**: order details limited to this month / last 7 days, plus orders they created. Shop Managers see everything.
+- **No staff accounts from public registration**: the staff, Shop Manager, Editor and Administrator roles can't become the default sign-up role (also when written straight to the database), and a self-registered user that somehow gets one is downgraded to Customer.
+- **Paused staff accounts** can't sign in anywhere and are refused by the app backend.
+- Default order status can no longer be set to Refunded / Cancelled / Failed.
+
+### Staff accounts (new)
+- WooCommerce → Stock & Order → **Staff accounts**: list with last-active time, **Add staff** (the person gets a set-password email; a one-time link can also be shared on WhatsApp), **Pause / Resume**, **Sign out everywhere**, **New password link**.
+- Administrators always can; an Administrator can allow Shop Managers.
+- **Registration & login safety** panel shows sign-up settings, default role, HTTPS and failed-login count.
+- Staff-only accounts that log in at wp-login.php / My Account land in the staff app; wp-admin sends them back to the app.
+
+### Phone app UX
+- **Back button / back gesture closes the open panel** instead of leaving the installed app (asks first if a form has unsaved data).
+- **Create Order draft is kept on the phone** — a call, reload or closed app no longer loses a half-typed order; restored with a Discard option.
+- Requests that hang on weak signal stop after 25–45 s with a clear message; a retried order save never creates a duplicate — the request ID is kept with the draft, across edits and app restarts, until the order is saved or discarded.
+- Bulk stock save works for changes staged across several searches.
+- Stock conflict and "busy" messages refresh the row with the current figure.
+- Card figures never break across lines (whole taka, lakh / crore above ৳1,00,000; exact amount on hover and in lists).
+- Negative stock flagged ("Negative stock", "oversold — recount") and listed under Needs attention.
+- Price edits show "list ৳X · −Y%"; client checks the same combined limit as the server.
+- Shared-stock badge on variations; saving one updates all its siblings in the list.
+- Login: show/hide password, autofocus, "Signing in…" state.
+- Larger touch targets for period / chip buttons; keyboard focus stays inside open panels; fallbacks for browsers without `color-mix()`.
+- Sales & Growth shows delivery charges included in sales. Stock value labelled "at sale price".
+
+### Performance
+- Dashboard stock figures cached (2 min, dropped on any stock/product change): dashboard refresh 130 → 94 DB queries, ~105 → ~77 ms.
+- Staff order creation: 451 → 358 DB queries, ~222 → ~163 ms.
+- 2 fewer DB queries on every page of the website (plugin version and rewrite flag autoloaded).
+- Report cache is invalidated once per request instead of on every order hook.
+
 ## 1.2.2 — 2026-09-25
 
 Hardening release from an external code review. All items were confirmed in the code and are now covered by automated tests.
