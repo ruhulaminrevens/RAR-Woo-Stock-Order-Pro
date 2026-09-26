@@ -1,4 +1,46 @@
-# RAR Woo Stock & Order v1.3.0
+# RAR Woo Stock & Order v1.4.0
+
+**Release date:** 2026-09-26
+
+v1.4.0 turns **WooCommerce → Stock & Order** into a professional **Control Center**. It has seven tabs: Overview, Staff, Activity, Settings, Security & Health, Tools and Help. It works on phone, tablet and desktop.
+
+## Highlights
+
+| Area | What you get |
+|---|---|
+| Overview | Live KPI cards (auto-refresh 1 min), alerts, 14-day staff-app vs website chart, health score, team leaderboard, stock watch, activity timeline |
+| Staff | Mobile-friendly list, search/filters, per-person **discount limit**, branch, order-list access, block stock / orders / rate change, pause, sign out, password link via WhatsApp |
+| Activity | Stock movements, staff orders, admin & security audit log — filters + CSV export |
+| Settings | Brand colour + logo (live preview), payment methods + extras (Rocket, Upay…), free delivery amount, stock reasons, login limits, staff session length, daily summary email, history retention |
+| Security & Health | 20+ checks with score and fix links, login stats, **emergency: sign out / pause all staff, switch app off** |
+| Tools | **Stock valuation CSV** (incl. cost value with WooCommerce COGS), exports, cache / link repair, test email, settings backup / restore / reset, system report |
+| Everywhere | Admin-bar menu, Dashboard widget, **Staff** column on orders, order & product side boxes, QR poster for installing the app |
+
+## Validation
+
+- `tests/smoke.php`: **102/102 passed** with HPOS on and with legacy storage (MariaDB), and on a fresh MySQL 8.0 site (CI replica), HPOS on and off.
+- All 7 tabs render with no PHP warnings. At 390, 820 and 1440 px there is no horizontal scroll.
+- QR codes decode correctly: short and 200-character URLs were checked with OpenCV, and an independent check matched a reference encoder bit for bit.
+- An independent code review found one medium issue and several low ones. All were fixed before release.
+  - The daily email now reports a full calendar day.
+  - Staff management is limited to plain Staff accounts.
+  - A slip logo can no longer block the slip.
+  - Bangla payment names get stable keys.
+  - CSV quoting is fixed, the upgrade runs under a lock, and reserved staff links are refused.
+
+## Install / Upgrade
+
+1. Take a full backup (files + database) — Hostinger → Backups.
+2. Plugins → Add New → Upload Plugin → `rar-woo-stock-order-v1.4.0.zip` → **Replace current with uploaded**.
+3. Open **WooCommerce → Stock & Order** → **Security & Health**, and fix anything red.
+4. **Settings**: brand colour/logo, payment methods, free delivery, daily email → **Save changes**.
+5. LiteSpeed Cache → Toolbox → **Purge All**. Open `/staff/` on each phone once.
+
+Settings, staff accounts, WooCommerce products, orders and stock history are preserved. On the first load after updating, the plugin adds one new table (`wp_rar_wso_audit`) and one index on the stock history table.
+
+---
+
+## Previous release: v1.3.0
 
 **Release date:** 2026-09-26
 

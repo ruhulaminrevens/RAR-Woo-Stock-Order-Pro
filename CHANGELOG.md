@@ -1,5 +1,73 @@
 # Changelog
 
+## 1.4.0 — 2026-09-26
+
+Admin **Control Center** release. WooCommerce → Stock & Order is rebuilt from a single settings page into a responsive, tabbed control panel, with new controls for staff, reports, security and branding. Covered by `tests/smoke.php` (102 checks, HPOS on and off, MariaDB and MySQL 8).
+
+### Control Center (WooCommerce → Stock & Order)
+- **Overview:** 8 live KPI cards (sales today vs same time yesterday, orders, staff-app sales and share, month to date, orders waiting incl. >24h, stock value, low / out / below-zero stock). They auto-refresh every minute and link to the matching screen. It also has:
+  - alert strip
+  - 14-day sales chart (staff app vs website)
+  - health score
+  - team leaderboard (orders, sales, average, discount given)
+  - stock watch
+  - recent activity timeline
+  - quick actions
+- **Staff:** responsive list (cards on phones — no more sideways scroll), search and filters (online now, active today, paused, managers), month sales per person. A **Manage** panel per person offers:
+  - name
+  - branch / territory
+  - **personal discount limit**
+  - order lists allow/hide
+  - block stock updates / order creation / rate changes for that person only
+  - Pause / Resume, Sign out everywhere, new password link (copy or WhatsApp)
+  - links to that person's orders and stock changes
+- **Activity:** stock movements, staff orders and admin & security log, with date / person / source / status / event filters, pagination and **CSV export of the same filters**.
+- **Settings:** grouped sections with a side menu and a sticky save bar that warns about unsaved changes. New options:
+  - brand colour and logo, with live phone preview
+  - phone and address on the slip
+  - payment methods on/off, extra methods (Rocket, Upay…), default method
+  - free delivery from an amount
+  - stock-change reasons list
+  - login limits, lock time and staff "keep me signed in" days
+  - daily summary email
+  - history retention
+  - admin bar / dashboard widget / orders column switches
+- **Security & Health:** 20+ read-only checks with a score and fix links (HTTPS, permalinks, staff route, stock management, DB locks, WP-Cron, file editor, debug display, "admin" user, application passwords, XML-RPC, PHP version, memory). It also has:
+  - login protection stats
+  - clear all login locks
+  - **Emergency**: sign out all staff, pause all staff, switch the app off/on
+- **Tools:** exports, maintenance, settings backup and a system report.
+  - Exports: **stock valuation CSV** (qty × selling price, plus cost value when WooCommerce Cost of Goods is on), stock movements, staff orders, audit log. All exports are UTF-8 with a BOM for Excel and protected against formula injection.
+  - Maintenance: recalculate dashboard figures, repair the staff link, send a test summary email, delete old history.
+  - Settings backup: export / import / reset.
+  - System report for support.
+- **Help:** a quick start, a roles matrix and an FAQ.
+- **QR code poster** so staff scan to install the app. It is printable, downloadable as PNG and generated in the browser (no external service).
+
+### Across WordPress
+- "Staff App" menu in the admin bar and a "Stock & Order — today" Dashboard widget.
+- **Staff** column on the WooCommerce orders list (HPOS and legacy).
+- "Staff app" box on staff orders: who created the order, branch, discount, and rates changed while billing.
+- **Stock history** box on the product edit screen.
+- Menu badge for stock below zero and orders waiting over 24h. It reads one autoloaded option, so no query is added per admin page.
+
+### Audit & reports
+- New audit log table: staff created / changed / paused / resumed / signed out, password links, staff sign-ins, login locks, settings saved (with changed keys), imports, resets, exports, emergency actions, emails.
+- Daily summary email (optional, per-recipient) for the full calendar day: sales vs the day before, staff-app sales, month to date, waiting orders, stock alerts, staff table.
+
+### Staff app
+- Uses the brand colour (header, phone status bar, slip, manifest) and the logo (header, login page, slip).
+- Slip shows the shop phone and address.
+- Payment list follows the settings, with the default pre-selected; a switched-off method falls back safely on the server.
+- Automatic shipping becomes 0 from the "free delivery" amount (staff can still type a charge).
+- Stock Manager reasons come from the settings.
+
+### Fixes and hardening
+- The settings sanitizer treats unticked boxes correctly for the form and keeps existing values on import. Staff links used by WordPress / WooCommerce (`wp-json`, `wc-api`, `shop`…) or an existing page are refused. Negative shipping amounts are blocked.
+- Staff management acts only on plain Staff accounts without extra admin capabilities. Shop Managers can't set a personal discount above the shop-wide limit.
+- The upgrade runs once under a lock. The history tables are created and indexed on the first load after updating.
+- Admin screens and exports are loaded only in wp-admin (not for staff-app AJAX calls).
+
 ## 1.3.0 — 2026-09-26
 
 Full audit release: concurrency, security, staff accounts and phone UX. Every defect below was first reproduced on WordPress 7.1.2 + WooCommerce 11.1.2, then fixed and covered by `tests/smoke.php` (72 checks, HPOS on and off).

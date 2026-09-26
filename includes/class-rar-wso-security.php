@@ -14,6 +14,7 @@ if ( ! defined( 'ABSPATH' ) ) {
  * - Staff-only accounts land in the staff app instead of wp-admin / My Account.
  */
 class RAR_WSO_Security {
+    /** Defaults; WooCommerce → Stock & Order → Settings → Access & security can change them. */
     const IP_LIMIT   = 10;
     const USER_LIMIT = 6;
     const WINDOW     = 900; // 15 minutes.
@@ -29,6 +30,51 @@ class RAR_WSO_Security {
         add_filter( 'login_redirect', array( __CLASS__, 'login_redirect' ), 20, 3 );
         add_filter( 'woocommerce_login_redirect', array( __CLASS__, 'wc_login_redirect' ), 20, 2 );
         add_action( 'admin_init', array( __CLASS__, 'keep_staff_in_app' ), 1 );
+        add_filter( 'auth_cookie_expiration', array( __CLASS__, 'staff_session_length' ), 20, 3 );
+        add_action( 'wp_login', array( __CLASS__, 'audit_login' ), 20, 2 );
+    }
+
+    /* Configurable limits ------------------------------------------------ */
+
+    public static function user_limit() {
+        $s = RAR_WSO_Plugin::settings();
+        return max( 3, min( 50, absint( $s['login_user_limit'] ) ) );
+    }
+
+    public static function ip_limit() {
+        $s = RAR_WSO_Plugin::settings();
+        return max( 5, min( 200, absint( $s['login_ip_limit'] ) ) );
+    }
+
+    /** Lockout length in seconds. */
+    public static function window() {
+        $s = RAR_WSO_Plugin::settings();
+        return max( 5, min( 1440, absint( $s['lockout_minutes'] ) ) ) * MINUTE_IN_SECONDS;
+    }
+
+    /**
+     * "Keep me signed in" length for staff-only accounts (days). Shop Managers and
+     * Administrators keep WordPress's own 14 days. Only shortens or lengthens the
+     * remembered login; a normal (not remembered) login still ends with the browser session.
+     */
+    public static function staff_session_length( $length, $user_id, $remember ) {
+        if ( ! $remember ) {
+            return $length;
+        }
+        $user = get_userdata( $user_id );
+        if ( ! self::is_staff_only( $user ) ) {
+            return $length;
+        }
+        $s    = RAR_WSO_Plugin::settings();
+        $days = max( 1, min( 90, absint( $s['session_days'] ) ) );
+        return $days * DAY_IN_SECONDS;
+    }
+
+    /** Sign-ins of anyone who can use the staff app go to the audit trail (any login form). */
+    public static function audit_login( $login, $user ) {
+        if ( $user instanceof WP_User && user_can( $user, 'rar_wso_access' ) && ! user_can( $user, 'manage_options' ) ) {
+            RAR_WSO_Audit::add( 'login', sprintf( '%s (%s)', $user->display_name, $user->user_login ), $user->ID, $user->ID );
+        }
     }
 
     /** Roles that must never be handed out by public registration. */
@@ -163,16 +209,17 @@ class RAR_WSO_Security {
         $ip   = get_transient( $k['ip'] );
         $user = '' !== trim( (string) $login ) ? get_transient( $k['user'] ) : false;
         $wait = 0;
-        if ( is_array( $ip ) && (int) $ip['n'] >= self::IP_LIMIT ) {
+        if ( is_array( $ip ) && (int) $ip['n'] >= self::ip_limit() ) {
             $wait = max( $wait, (int) $ip['until'] - time() );
         }
-        if ( is_array( $user ) && (int) $user['n'] >= self::USER_LIMIT ) {
+        if ( is_array( $user ) && (int) $user['n'] >= self::user_limit() ) {
             $wait = max( $wait, (int) $user['until'] - time() );
         }
         return $wait > 0 ? (int) ceil( $wait / 60 ) : 0;
     }
 
     public static function record_failure( $login ) {
+        $window = self::window();
         foreach ( self::keys( $login ) as $type => $key ) {
             if ( 'user' === $type && '' === trim( (string) $login ) ) {
                 continue;
@@ -180,11 +227,46 @@ class RAR_WSO_Security {
             $row = get_transient( $key );
             $row = is_array( $row ) ? $row : array( 'n' => 0, 'until' => 0 );
             $row['n']++;
-            $row['until'] = time() + self::WINDOW;
-            set_transient( $key, $row, self::WINDOW );
+            $row['until'] = time() + $window;
+            set_transient( $key, $row, $window );
+            // Log the moment a lock starts (not every wrong password), so bots can't flood the log.
+            $limit = 'ip' === $type ? self::ip_limit() : self::user_limit();
+            if ( (int) $row['n'] === $limit ) {
+                RAR_WSO_Audit::add(
+                    'login_locked',
+                    'ip' === $type
+                        /* translators: %d attempts */
+                        ? sprintf( __( 'Network locked after %d wrong passwords', 'rar-woo-stock-order' ), $limit )
+                        /* translators: 1: username, 2: attempts */
+                        : sprintf( __( 'Username "%1$s" locked after %2$d wrong passwords', 'rar-woo-stock-order' ), sanitize_user( (string) $login ), $limit ),
+                    0,
+                    0
+                );
+            }
         }
         $total = (int) get_option( 'rar_wso_login_failures', 0 );
         update_option( 'rar_wso_login_failures', $total + 1, false );
+        $today = get_option( 'rar_wso_login_failures_day', array() );
+        $day   = wp_date( 'Y-m-d' );
+        $today = ( is_array( $today ) && ( $today['d'] ?? '' ) === $day ) ? $today : array( 'd' => $day, 'n' => 0 );
+        $today['n']++;
+        update_option( 'rar_wso_login_failures_day', $today, false );
+    }
+
+    /** Wrong passwords on the staff login form today (site timezone). */
+    public static function failures_today() {
+        $today = get_option( 'rar_wso_login_failures_day', array() );
+        return ( is_array( $today ) && ( $today['d'] ?? '' ) === wp_date( 'Y-m-d' ) ) ? (int) $today['n'] : 0;
+    }
+
+    /**
+     * Removes every staff-login lock (after a known false alarm). Transients in the database
+     * are deleted directly; with a persistent object cache the entries simply expire.
+     */
+    public static function clear_all_lockouts() {
+        global $wpdb;
+        $n = (int) $wpdb->query( "DELETE FROM {$wpdb->options} WHERE option_name LIKE '\\_transient\\_rar\\_wso\\_lf\\_%' OR option_name LIKE '\\_transient\\_timeout\\_rar\\_wso\\_lf\\_%'" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        return $n;
     }
 
     public static function clear_failures( $login ) {
@@ -253,6 +335,7 @@ class RAR_WSO_Security {
             'wc_account'   => 'yes' === get_option( 'woocommerce_enable_myaccount_registration' ),
             'wc_checkout'  => 'yes' === get_option( 'woocommerce_enable_signup_and_login_from_checkout' ),
             'failures'     => (int) get_option( 'rar_wso_login_failures', 0 ),
+            'today'        => self::failures_today(),
         );
     }
 }

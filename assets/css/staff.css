@@ -1,4 +1,4 @@
-/* RAR Woo Stock & Order — staff app v1.3.0 */
+/* RAR Woo Stock & Order — staff app v1.4.0 */
 :root{
   color-scheme:light;
   --font:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans","Noto Sans Bengali","Hind Siliguri",Arial,sans-serif;
@@ -598,3 +598,7 @@ html.rar-standalone body{overscroll-behavior-y:contain}
 }
 .c-num small{display:inline-block;white-space:nowrap}
 .c-num span[title]{cursor:help}
+/* v1.4.0 — shop logo in the header / login */
+.mark img{width:100%;height:100%;object-fit:cover;border-radius:inherit;display:block}
+.mark:has(img){background:#fff;overflow:hidden}
+.rar-login-logo{width:56px;height:56px;border-radius:14px;object-fit:cover;display:block;margin:0 0 12px;border:1px solid var(--line)}

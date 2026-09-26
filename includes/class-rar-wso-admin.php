@@ -3,58 +3,276 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
+// Screens and exports are only needed on wp-admin pages, admin-post.php and the Overview refresh —
+// never for the staff app's own admin-ajax.php calls.
+if ( is_admin() && ( ! wp_doing_ajax() || ( isset( $_REQUEST['action'] ) && 'rar_wso_admin_live' === $_REQUEST['action'] ) ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+    require_once RAR_WSO_PATH . 'includes/class-rar-wso-admin-views.php';
+    require_once RAR_WSO_PATH . 'includes/class-rar-wso-export.php';
+}
+
+/**
+ * WooCommerce → Stock & Order: the Control Center.
+ *
+ * Controller only — menu, assets, settings, form handlers and the live-refresh endpoint.
+ * Screens are rendered by RAR_WSO_Admin_Views. Every form posts to admin-post.php with its
+ * own nonce and capability check, then redirects back (no state changes on GET).
+ */
 class RAR_WSO_Admin {
+    const PAGE = 'rar-wso';
+
+    private $hook = '';
+
     public function __construct() {
         add_action( 'admin_menu', array( $this, 'menu' ), 80 );
         add_action( 'admin_init', array( $this, 'register_settings' ) );
+        add_action( 'admin_enqueue_scripts', array( $this, 'assets' ) );
         add_action( 'admin_post_rar_wso_add_staff', array( $this, 'add_staff' ) );
         add_action( 'admin_post_rar_wso_staff_action', array( $this, 'staff_action' ) );
+        add_action( 'admin_post_rar_wso_staff_update', array( $this, 'staff_update' ) );
+        add_action( 'admin_post_rar_wso_tool', array( $this, 'tool' ) );
+        add_action( 'admin_post_rar_wso_export', array( $this, 'export' ) );
+        add_action( 'wp_ajax_rar_wso_admin_live', array( $this, 'live' ) );
+        add_action( 'update_option_rar_wso_settings', array( $this, 'audit_settings' ), 20, 2 );
+        add_filter( 'admin_body_class', array( $this, 'body_class' ) );
         // Flush once after activation/upgrade/slug change, after the /staff/ rule is registered on init.
         add_action( 'init', array( $this, 'maybe_flush_rewrite' ), 99 );
     }
 
+    public static function url( $tab = 'overview', $args = array() ) {
+        $base = array( 'page' => self::PAGE );
+        if ( 'overview' !== $tab ) {
+            $base['tab'] = $tab;
+        }
+        return add_query_arg( array_merge( $base, $args ), admin_url( 'admin.php' ) );
+    }
+
+    public static function tabs() {
+        return array(
+            'overview' => array( __( 'Overview', 'rar-woo-stock-order' ), 'dashboard' ),
+            'staff'    => array( __( 'Staff', 'rar-woo-stock-order' ), 'users' ),
+            'activity' => array( __( 'Activity', 'rar-woo-stock-order' ), 'activity' ),
+            'settings' => array( __( 'Settings', 'rar-woo-stock-order' ), 'sliders' ),
+            'security' => array( __( 'Security & Health', 'rar-woo-stock-order' ), 'shield' ),
+            'tools'    => array( __( 'Tools', 'rar-woo-stock-order' ), 'wrench' ),
+            'help'     => array( __( 'Help', 'rar-woo-stock-order' ), 'help' ),
+        );
+    }
+
+    public static function current_tab() {
+        $tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'overview'; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+        return isset( self::tabs()[ $tab ] ) ? $tab : 'overview';
+    }
+
     public function menu() {
-        add_submenu_page(
+        $this->hook = (string) add_submenu_page(
             'woocommerce',
             __( 'RAR Woo Stock & Order', 'rar-woo-stock-order' ),
             __( 'Stock & Order', 'rar-woo-stock-order' ),
             'manage_woocommerce',
-            'rar-wso',
+            self::PAGE,
             array( $this, 'render' )
+        );
+        // A small counter on the menu item when something needs attention (cached figures only).
+        $n = RAR_WSO_Plugin::attention_count();
+        if ( $n > 0 ) {
+            global $submenu;
+            foreach ( (array) ( $submenu['woocommerce'] ?? array() ) as $i => $item ) {
+                if ( self::PAGE === ( $item[2] ?? '' ) ) {
+                    $submenu['woocommerce'][ $i ][0] .= ' <span class="awaiting-mod count-' . (int) $n . '"><span class="pending-count">' . esc_html( $n > 99 ? '99+' : (string) $n ) . '</span></span>'; // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited
+                }
+            }
+        }
+    }
+
+    public function body_class( $classes ) {
+        $screen = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
+        return ( $screen && $this->hook && $screen->id === $this->hook ) ? $classes . ' rarx-screen' : $classes;
+    }
+
+    public function assets( $hook ) {
+        if ( $hook !== $this->hook ) {
+            return;
+        }
+        $v = RAR_WSO_VERSION;
+        wp_enqueue_style( 'rar-wso-admin', RAR_WSO_URL . 'assets/css/admin.css', array(), $v );
+        wp_enqueue_script( 'rar-wso-admin', RAR_WSO_URL . 'assets/js/admin.js', array(), $v, true );
+        if ( 'settings' === self::current_tab() && current_user_can( 'upload_files' ) ) {
+            wp_enqueue_media();
+        }
+        wp_localize_script(
+            'rar-wso-admin',
+            'RARWSOAdmin',
+            array(
+                'ajaxUrl'  => admin_url( 'admin-ajax.php' ),
+                'nonce'    => wp_create_nonce( 'rar_wso_admin' ),
+                'staffUrl' => RAR_WSO_Plugin::staff_url(),
+                'business' => RAR_WSO_Plugin::business_name(),
+                'title'    => RAR_WSO_Plugin::settings()['dashboard_title'],
+                'brand'    => RAR_WSO_Plugin::brand_color(),
+                'tab'      => self::current_tab(),
+                'i18n'     => array(
+                    'copied'    => __( 'Copied', 'rar-woo-stock-order' ),
+                    'copyFail'  => __( 'Copy failed — select the text and press Ctrl+C.', 'rar-woo-stock-order' ),
+                    'unsaved'   => __( 'You have unsaved changes', 'rar-woo-stock-order' ),
+                    'updated'   => __( 'Updated', 'rar-woo-stock-order' ),
+                    'offline'   => __( 'Could not refresh — check the connection.', 'rar-woo-stock-order' ),
+                    'pickLogo'  => __( 'Choose a logo', 'rar-woo-stock-order' ),
+                    'useLogo'   => __( 'Use this logo', 'rar-woo-stock-order' ),
+                    'noMatch'   => __( 'No staff match this search.', 'rar-woo-stock-order' ),
+                    'tooLong'   => __( 'This link is too long for a QR code.', 'rar-woo-stock-order' ),
+                ),
+            )
         );
     }
 
+    /* --------------------------------------------------------------------
+     * Settings
+     * ------------------------------------------------------------------ */
+
     public function register_settings() {
-        register_setting( 'rar_wso_group', 'rar_wso_settings', array( $this, 'sanitize' ) );
+        register_setting( 'rar_wso_group', 'rar_wso_settings', array( 'sanitize_callback' => array( $this, 'sanitize' ) ) );
+    }
+
+    private static function flag( $input, $key, $old, $from_form ) {
+        if ( ! array_key_exists( $key, $input ) ) {
+            // A form leaves unticked boxes out; an import / programmatic save keeps the old value.
+            return $from_form ? 'no' : ( 'yes' === ( $old[ $key ] ?? 'no' ) ? 'yes' : 'no' );
+        }
+        $v = $input[ $key ];
+        if ( is_bool( $v ) ) {
+            return $v ? 'yes' : 'no';
+        }
+        return in_array( strtolower( trim( (string) $v ) ), array( '1', 'yes', 'on', 'true' ), true ) ? 'yes' : 'no';
+    }
+
+    private static function lines( $raw, $max_lines, $max_len ) {
+        $out = array();
+        foreach ( (array) preg_split( '/\r\n|\r|\n/', (string) $raw ) as $line ) {
+            $line = trim( sanitize_text_field( $line ) );
+            if ( '' === $line ) {
+                continue;
+            }
+            $line = function_exists( 'mb_substr' ) ? mb_substr( $line, 0, $max_len ) : substr( $line, 0, $max_len );
+            if ( ! in_array( $line, $out, true ) ) {
+                $out[] = $line;
+            }
+        }
+        return implode( "\n", array_slice( $out, 0, $max_lines ) );
+    }
+
+    /** Non-negative amount; '' stays '' (means "not set"). */
+    private static function money_in( $raw ) {
+        $raw = trim( (string) ( is_scalar( $raw ) ? $raw : '' ) );
+        if ( '' === $raw || ! is_numeric( $raw ) ) {
+            return '' === $raw ? '' : '0';
+        }
+        return wc_format_decimal( (string) max( 0, min( 9999999, (float) $raw ) ) );
+    }
+
+    private static function int_in( $input, $key, $old, $min, $max ) {
+        if ( ! isset( $input[ $key ] ) || '' === trim( (string) $input[ $key ] ) ) {
+            return (string) $old[ $key ];
+        }
+        return (string) min( $max, max( $min, absint( $input[ $key ] ) ) );
     }
 
     public function sanitize( $input ) {
+        // options.php has already unslashed the posted values.
         $input = is_array( $input ) ? $input : array();
         $old   = RAR_WSO_Plugin::settings();
-        $out   = RAR_WSO_Plugin::defaults();
-        $out['enabled']              = ! empty( $input['enabled'] ) ? 'yes' : 'no';
-        $out['staff_slug']           = sanitize_title( isset( $input['staff_slug'] ) ? $input['staff_slug'] : 'staff' );
-        $out['dashboard_title']      = sanitize_text_field( isset( $input['dashboard_title'] ) ? $input['dashboard_title'] : 'Woo Stock & Order' );
-        $out['default_order_status'] = RAR_WSO_Ajax::order_status_setting( isset( $input['default_order_status'] ) ? $input['default_order_status'] : 'processing' );
-        $out['allow_price_override'] = ! empty( $input['allow_price_override'] ) ? 'yes' : 'no';
-        $out['staff_max_discount']   = (string) min( 100, max( 0, (float) ( isset( $input['staff_max_discount'] ) ? $input['staff_max_discount'] : 20 ) ) );
-        $out['default_shipping']     = wc_format_decimal( isset( $input['default_shipping'] ) ? $input['default_shipping'] : '0' );
-        $out['shipping_dhaka']       = wc_format_decimal( isset( $input['shipping_dhaka'] ) ? $input['shipping_dhaka'] : '' );
-        $out['shipping_outside']     = wc_format_decimal( isset( $input['shipping_outside'] ) ? $input['shipping_outside'] : '' );
-        $out['low_stock_threshold']  = (string) max( 1, absint( isset( $input['low_stock_threshold'] ) ? $input['low_stock_threshold'] : 10 ) );
-        $out['staff_view_orders']    = ! empty( $input['staff_view_orders'] ) ? 'yes' : 'no';
-        $out['business_name']        = sanitize_text_field( isset( $input['business_name'] ) ? $input['business_name'] : '' );
-        $out['slip_footer']          = sanitize_text_field( isset( $input['slip_footer'] ) ? $input['slip_footer'] : '' );
-        // Only an Administrator may let Shop Managers add staff accounts.
-        $out['managers_add_staff']   = current_user_can( 'promote_users' ) ? ( ! empty( $input['managers_add_staff'] ) ? 'yes' : 'no' ) : $old['managers_add_staff'];
+        $form  = ! empty( $input['_form'] );
+        $get   = static function ( $key ) use ( $input, $old ) {
+            return array_key_exists( $key, $input ) ? $input[ $key ] : $old[ $key ];
+        };
+        $out = RAR_WSO_Plugin::defaults();
 
-        if ( empty( $out['staff_slug'] ) ) {
+        // General.
+        foreach ( array( 'enabled', 'allow_price_override', 'staff_view_orders', 'digest_enabled', 'admin_bar_link', 'dashboard_widget', 'order_column' ) as $k ) {
+            $out[ $k ] = self::flag( $input, $k, $old, $form );
+        }
+        $out['staff_slug']           = sanitize_title( (string) $get( 'staff_slug' ) );
+        $out['dashboard_title']      = sanitize_text_field( (string) $get( 'dashboard_title' ) );
+        $out['default_order_status'] = RAR_WSO_Ajax::order_status_setting( (string) $get( 'default_order_status' ) );
+        $out['staff_max_discount']   = (string) min( 100, max( 0, (float) $get( 'staff_max_discount' ) ) );
+        $out['default_shipping']     = self::money_in( $get( 'default_shipping' ) );
+        $out['shipping_dhaka']       = self::money_in( $get( 'shipping_dhaka' ) );
+        $out['shipping_outside']     = self::money_in( $get( 'shipping_outside' ) );
+        $out['free_shipping_over']   = (string) ( self::money_in( $get( 'free_shipping_over' ) ) ?: '0' );
+        $out['low_stock_threshold']  = (string) max( 1, absint( $get( 'low_stock_threshold' ) ) );
+        $out['business_name']        = sanitize_text_field( (string) $get( 'business_name' ) );
+        $out['slip_footer']          = sanitize_text_field( (string) $get( 'slip_footer' ) );
+        $out['slip_phone']           = substr( sanitize_text_field( (string) $get( 'slip_phone' ) ), 0, 40 );
+        $out['slip_address']         = function_exists( 'mb_substr' ) ? mb_substr( sanitize_text_field( (string) $get( 'slip_address' ) ), 0, 140 ) : substr( sanitize_text_field( (string) $get( 'slip_address' ) ), 0, 140 );
+        // Only an Administrator may let Shop Managers add staff accounts.
+        $out['managers_add_staff']   = current_user_can( 'promote_users' ) ? self::flag( $input, 'managers_add_staff', $old, $form ) : $old['managers_add_staff'];
+
+        // Branding.
+        $color              = sanitize_hex_color( (string) $get( 'brand_color' ) );
+        $out['brand_color'] = ( $color && 7 === strlen( $color ) ) ? strtolower( $color ) : $old['brand_color'];
+        $logo               = absint( $get( 'logo_id' ) );
+        $out['logo_id']     = ( $logo && wp_attachment_is_image( $logo ) ) ? (string) $logo : '0';
+
+        // Payments.
+        $pm = $get( 'payment_methods' );
+        $pm = is_array( $pm ) ? $pm : explode( ',', (string) $pm );
+        if ( $form && ! array_key_exists( 'payment_methods', $input ) ) {
+            $pm = array();
+        }
+        $out['payment_methods'] = implode( ',', array_values( array_intersect( RAR_WSO_Ajax::builtin_payment_keys(), array_map( 'sanitize_key', $pm ) ) ) );
+        $out['payment_extra']   = self::lines( $get( 'payment_extra' ), 8, 40 );
+        $out['payment_default'] = sanitize_key( (string) $get( 'payment_default' ) );
+
+        // Stock.
+        $reasons              = self::lines( $get( 'stock_reasons' ), 20, 60 );
+        $out['stock_reasons'] = '' !== $reasons ? $reasons : RAR_WSO_Plugin::defaults()['stock_reasons'];
+
+        // Access & security.
+        $out['login_user_limit'] = self::int_in( $input, 'login_user_limit', $old, 3, 50 );
+        $out['login_ip_limit']   = self::int_in( $input, 'login_ip_limit', $old, 5, 200 );
+        $out['lockout_minutes']  = self::int_in( $input, 'lockout_minutes', $old, 5, 1440 );
+        $out['session_days']     = self::int_in( $input, 'session_days', $old, 1, 90 );
+
+        // Reports & integrations.
+        $emails = array();
+        foreach ( preg_split( '/[\s,;]+/', (string) $get( 'digest_email' ) ) as $e ) {
+            $e = sanitize_email( $e );
+            if ( is_email( $e ) ) {
+                $emails[] = $e;
+            }
+        }
+        $out['digest_email']       = implode( ', ', array_slice( array_unique( $emails ), 0, 10 ) );
+        $out['digest_hour']        = self::int_in( $input, 'digest_hour', $old, 0, 23 );
+        $keep                      = absint( $get( 'log_retention_days' ) );
+        $out['log_retention_days'] = (string) ( $keep ? min( 3650, max( 30, $keep ) ) : 0 );
+
+        if ( '' === $out['staff_slug'] ) {
             $out['staff_slug'] = 'staff';
+        }
+        $taken = $out['staff_slug'] !== $old['staff_slug'] && get_page_by_path( $out['staff_slug'], OBJECT, array( 'page', 'post', 'product' ) );
+        if ( $taken || in_array( $out['staff_slug'], array( 'wp-admin', 'wp-login', 'wp-content', 'wp-includes', 'wp-json', 'wc-api', 'wc-auth', 'xmlrpc', 'shop', 'cart', 'checkout', 'my-account', 'product', 'product-category', 'feed', 'category', 'tag', 'page', 'search', 'author' ), true ) ) {
+            add_settings_error( 'rar_wso_settings', 'slug', __( 'That staff link is used by WordPress or WooCommerce; the previous one was kept.', 'rar-woo-stock-order' ) );
+            $out['staff_slug'] = $old['staff_slug'];
         }
         if ( $old['staff_slug'] !== $out['staff_slug'] ) {
             update_option( 'rar_wso_flush_rewrite', 1, true );
         }
         return $out;
+    }
+
+    /** Writes "Settings saved: changed keys" to the audit log for changes made in wp-admin. */
+    public function audit_settings( $old, $new ) {
+        if ( ( defined( 'WP_CLI' ) && WP_CLI ) || ! is_admin() || ! is_user_logged_in() || ! is_array( $old ) || ! is_array( $new ) ) {
+            return;
+        }
+        $changed = array();
+        foreach ( $new as $k => $v ) {
+            if ( (string) ( $old[ $k ] ?? '' ) !== (string) $v ) {
+                $changed[] = $k;
+            }
+        }
+        if ( $changed && ! did_action( 'rar_wso_settings_import' ) ) {
+            RAR_WSO_Audit::add( 'settings_saved', 'Changed: ' . implode( ', ', $changed ) );
+        }
     }
 
     public function maybe_flush_rewrite() {
@@ -66,16 +284,39 @@ class RAR_WSO_Admin {
     }
 
     /* --------------------------------------------------------------------
-     * Staff accounts (created here by an Administrator — no public registration)
+     * Helpers for the form handlers
      * ------------------------------------------------------------------ */
 
-    private function back( $args ) {
-        wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php?page=rar-wso' ) ) . '#rar-staff' );
+    private function back( $tab, $anchor = '', $args = array() ) {
+        wp_safe_redirect( self::url( $tab, $args ) . ( $anchor ? '#' . $anchor : '' ) );
         exit;
     }
 
-    private function flash( $type, $text, $link = '' ) {
+    public static function flash( $type, $text, $link = '' ) {
         set_transient( 'rar_wso_flash_' . get_current_user_id(), array( 'type' => $type, 'text' => $text, 'link' => $link ), 10 * MINUTE_IN_SECONDS );
+    }
+
+    private function deny( $message ) {
+        wp_die( esc_html( $message ), esc_html__( 'Not allowed', 'rar-woo-stock-order' ), array( 'response' => 403, 'back_link' => true ) );
+    }
+
+    /** Only plain staff accounts (never Shop Managers / Administrators, never yourself). */
+    private static function manageable_staff( $user_id ) {
+        $user = get_userdata( $user_id );
+        return ( $user && self::is_plain_staff( $user ) && get_current_user_id() !== (int) $user_id ) ? $user : null;
+    }
+
+    /**
+     * Role is exactly Staff AND the account has no extra admin powers (a role editor plugin
+     * could add capabilities to one user). Such accounts are managed under Users instead.
+     */
+    public static function is_plain_staff( $user ) {
+        return $user instanceof WP_User
+            && array_values( (array) $user->roles ) === array( 'rar_wso_staff' )
+            && RAR_WSO_Security::is_staff_only( $user )
+            && ! user_can( $user, 'list_users' )
+            && ! user_can( $user, 'edit_users' )
+            && ! user_can( $user, 'promote_users' );
     }
 
     /** One-time "set your password" link (valid for 24 hours), also emailed to the staff member. */
@@ -104,27 +345,34 @@ class RAR_WSO_Admin {
         return $link;
     }
 
+    /* --------------------------------------------------------------------
+     * Staff accounts (created here by an Administrator — no public registration)
+     * ------------------------------------------------------------------ */
+
     public function add_staff() {
         if ( ! RAR_WSO_Plugin::can_manage_staff() ) {
-            wp_die( esc_html__( 'You do not have permission to add staff accounts.', 'rar-woo-stock-order' ), 403 );
+            $this->deny( __( 'You do not have permission to add staff accounts.', 'rar-woo-stock-order' ) );
         }
         check_admin_referer( 'rar_wso_add_staff' );
 
-        $login = sanitize_user( wp_unslash( $_POST['user_login'] ?? '' ), true );
-        $email = sanitize_email( wp_unslash( $_POST['user_email'] ?? '' ) );
-        $name  = sanitize_text_field( wp_unslash( $_POST['display_name'] ?? '' ) );
+        $login  = sanitize_user( wp_unslash( $_POST['user_login'] ?? '' ), true );
+        $email  = sanitize_email( wp_unslash( $_POST['user_email'] ?? '' ) );
+        $name   = sanitize_text_field( wp_unslash( $_POST['display_name'] ?? '' ) );
+        $branch = sanitize_text_field( wp_unslash( $_POST['branch'] ?? '' ) );
+        $disc   = trim( sanitize_text_field( wp_unslash( $_POST['max_discount'] ?? '' ) ) );
+        $mail   = ! empty( $_POST['send_email'] ) || ! isset( $_POST['send_email_shown'] );
 
         if ( '' === $login || strlen( $login ) < 3 ) {
-            $this->flash( 'error', __( 'Enter a username of at least 3 letters or numbers.', 'rar-woo-stock-order' ) );
-            $this->back( array() );
+            self::flash( 'error', __( 'Enter a username of at least 3 letters or numbers.', 'rar-woo-stock-order' ) );
+            $this->back( 'staff', 'rarx-add' );
         }
         if ( ! is_email( $email ) ) {
-            $this->flash( 'error', __( 'Enter a valid email address for the staff member.', 'rar-woo-stock-order' ) );
-            $this->back( array() );
+            self::flash( 'error', __( 'Enter a valid email address for the staff member.', 'rar-woo-stock-order' ) );
+            $this->back( 'staff', 'rarx-add' );
         }
         if ( username_exists( $login ) || email_exists( $email ) ) {
-            $this->flash( 'error', __( 'That username or email already has an account. Use a different one, or change the existing user\'s role under Users.', 'rar-woo-stock-order' ) );
-            $this->back( array() );
+            self::flash( 'error', __( 'That username or email already has an account. Use a different one, or change the existing user\'s role under Users.', 'rar-woo-stock-order' ) );
+            $this->back( 'staff', 'rarx-add' );
         }
 
         RAR_WSO_Security::$creating_staff = true;
@@ -141,269 +389,388 @@ class RAR_WSO_Admin {
         RAR_WSO_Security::$creating_staff = false;
 
         if ( is_wp_error( $user_id ) ) {
-            $this->flash( 'error', $user_id->get_error_message() );
-            $this->back( array() );
+            self::flash( 'error', $user_id->get_error_message() );
+            $this->back( 'staff', 'rarx-add' );
         }
 
         update_user_meta( $user_id, 'rar_wso_added_by', get_current_user_id() );
-        $link = $this->password_link( get_userdata( $user_id ), true );
-        $this->flash(
+        if ( '' !== $branch ) {
+            update_user_meta( $user_id, 'rar_wso_branch', function_exists( 'mb_substr' ) ? mb_substr( $branch, 0, 60 ) : substr( $branch, 0, 60 ) );
+        }
+        if ( '' !== $disc && is_numeric( $disc ) ) {
+            update_user_meta( $user_id, 'rar_wso_max_discount', (string) min( self::personal_limit_cap(), max( 0, (float) $disc ) ) );
+        }
+        $link = $this->password_link( get_userdata( $user_id ), $mail );
+        RAR_WSO_Audit::add( 'staff_created', sprintf( '%s (%s)', '' !== $name ? $name : $login, $login ), $user_id );
+        self::flash(
             'success',
-            /* translators: %s username */
-            sprintf( __( 'Staff account "%s" created. A set-password email was sent. You can also send this one-time link on WhatsApp (valid 24 hours, share only with this person):', 'rar-woo-stock-order' ), $login ),
+            $mail
+                /* translators: %s username */
+                ? sprintf( __( 'Staff account "%s" created. A set-password email was sent. You can also send this one-time link on WhatsApp (valid 24 hours, share only with this person):', 'rar-woo-stock-order' ), $login )
+                /* translators: %s username */
+                : sprintf( __( 'Staff account "%s" created. Send this one-time set-password link to the person (valid 24 hours, share only with them):', 'rar-woo-stock-order' ), $login ),
             $link
         );
-        $this->back( array() );
+        $this->back( 'staff', 'rarx-staff-' . $user_id );
     }
 
     public function staff_action() {
         if ( ! RAR_WSO_Plugin::can_manage_staff() ) {
-            wp_die( esc_html__( 'You do not have permission to manage staff accounts.', 'rar-woo-stock-order' ), 403 );
+            $this->deny( __( 'You do not have permission to manage staff accounts.', 'rar-woo-stock-order' ) );
         }
         $user_id = absint( $_POST['user_id'] ?? 0 );
         $do      = sanitize_key( wp_unslash( $_POST['do'] ?? '' ) );
         check_admin_referer( 'rar_wso_staff_' . $user_id );
 
-        $user = get_userdata( $user_id );
-        // Only plain staff accounts can be managed here — never admins or shop managers.
-        if ( ! $user || array_values( (array) $user->roles ) !== array( 'rar_wso_staff' ) || get_current_user_id() === $user_id ) {
-            $this->flash( 'error', __( 'Only Woo Stock & Order Staff accounts can be managed here.', 'rar-woo-stock-order' ) );
-            $this->back( array() );
+        $user = self::manageable_staff( $user_id );
+        if ( ! $user ) {
+            self::flash( 'error', __( 'Only Woo Stock & Order Staff accounts can be managed here.', 'rar-woo-stock-order' ) );
+            $this->back( 'staff' );
         }
 
         switch ( $do ) {
             case 'pause':
                 update_user_meta( $user_id, 'rar_wso_suspended', '1' );
                 WP_Session_Tokens::get_instance( $user_id )->destroy_all();
+                RAR_WSO_Audit::add( 'staff_paused', $user->display_name, $user_id );
                 /* translators: %s name */
-                $this->flash( 'success', sprintf( __( '%s is paused and signed out on every device.', 'rar-woo-stock-order' ), $user->display_name ) );
+                self::flash( 'success', sprintf( __( '%s is paused and signed out on every device.', 'rar-woo-stock-order' ), $user->display_name ) );
                 break;
             case 'resume':
                 delete_user_meta( $user_id, 'rar_wso_suspended' );
+                RAR_WSO_Audit::add( 'staff_resumed', $user->display_name, $user_id );
                 /* translators: %s name */
-                $this->flash( 'success', sprintf( __( '%s can sign in again.', 'rar-woo-stock-order' ), $user->display_name ) );
+                self::flash( 'success', sprintf( __( '%s can sign in again.', 'rar-woo-stock-order' ), $user->display_name ) );
                 break;
             case 'signout':
                 WP_Session_Tokens::get_instance( $user_id )->destroy_all();
+                RAR_WSO_Audit::add( 'staff_signout', $user->display_name, $user_id );
                 /* translators: %s name */
-                $this->flash( 'success', sprintf( __( '%s was signed out on every phone and computer.', 'rar-woo-stock-order' ), $user->display_name ) );
+                self::flash( 'success', sprintf( __( '%s was signed out on every phone and computer.', 'rar-woo-stock-order' ), $user->display_name ) );
                 break;
             case 'link':
                 $link = $this->password_link( $user, true );
+                RAR_WSO_Audit::add( 'staff_link', $user->display_name, $user_id );
                 /* translators: %s name */
-                $this->flash( 'success', sprintf( __( 'New set-password link for %s (emailed too; valid 24 hours, share only with this person):', 'rar-woo-stock-order' ), $user->display_name ), $link );
+                self::flash( 'success', sprintf( __( 'New set-password link for %s (emailed too; valid 24 hours, share only with this person):', 'rar-woo-stock-order' ), $user->display_name ), $link );
                 break;
         }
-        $this->back( array() );
+        $this->back( 'staff', 'rarx-staff-' . $user_id );
     }
 
-    private function staff_rows() {
-        return get_users(
-            array(
-                'role__in' => array( 'rar_wso_staff', 'shop_manager' ),
-                'orderby'  => 'display_name',
-                'number'   => 200,
-            )
+    /** Administrators may set any personal limit; a Shop Manager cannot go above the shop-wide one. */
+    private static function personal_limit_cap() {
+        if ( current_user_can( 'manage_options' ) ) {
+            return 100.0;
+        }
+        $s = RAR_WSO_Plugin::settings();
+        return (float) min( 100, max( 0, (float) $s['staff_max_discount'] ) );
+    }
+
+    /** Capabilities a single staff member can be blocked from (the Staff role allows all of them). */
+    public static function staff_caps() {
+        return array(
+            'rar_wso_manage_stock'  => __( 'Update stock', 'rar-woo-stock-order' ),
+            'rar_wso_create_orders' => __( 'Create orders', 'rar-woo-stock-order' ),
+            'rar_wso_adjust_price'  => __( 'Change item rates while billing', 'rar-woo-stock-order' ),
         );
     }
 
-    private function ago( $ts ) {
-        if ( ! $ts ) {
-            return '—';
+    public function staff_update() {
+        if ( ! RAR_WSO_Plugin::can_manage_staff() ) {
+            $this->deny( __( 'You do not have permission to manage staff accounts.', 'rar-woo-stock-order' ) );
         }
-        /* translators: %s human time difference */
-        return sprintf( __( '%s ago', 'rar-woo-stock-order' ), human_time_diff( (int) $ts, time() ) );
-    }
-
-    private function render_security() {
-        $r        = RAR_WSO_Security::registration_status();
-        $blocked  = get_transient( 'rar_wso_role_blocked' );
-        $risky    = in_array( $r['stored_role'], RAR_WSO_Security::protected_roles(), true );
-        $ok       = '<span style="color:#1e8a45;font-weight:600">&#10003; ';
-        $warn     = '<span style="color:#b32d2e;font-weight:600">&#9888; ';
-        $end      = '</span>';
-        $settings = admin_url( 'options-general.php' );
-        $wc_acc   = admin_url( 'admin.php?page=wc-settings&tab=account' );
-        ?>
-        <div class="rar-card">
-            <h2><?php esc_html_e( 'Registration & login safety', 'rar-woo-stock-order' ); ?></h2>
-            <p class="description"><?php esc_html_e( 'Staff accounts are never created by public sign-up. Anyone who registers on the website gets the Customer role only; this plugin blocks the staff, Shop Manager and Administrator roles from being handed out by registration.', 'rar-woo-stock-order' ); ?></p>
-            <?php if ( $blocked ) : ?>
-                <div class="notice notice-warning inline"><p><?php
-                /* translators: %s role */
-                echo esc_html( sprintf( __( 'Blocked: someone tried to make "%s" the default role for new sign-ups. It was kept as Customer.', 'rar-woo-stock-order' ), $blocked ) );
-                ?></p></div>
-            <?php endif; ?>
-            <table class="widefat striped rar-kv">
-                <tbody>
-                    <tr><th><?php esc_html_e( 'Staff accounts from public sign-up', 'rar-woo-stock-order' ); ?></th><td><?php echo $ok . esc_html__( 'Blocked (staff are added in "Staff accounts" above by an Administrator)', 'rar-woo-stock-order' ) . $end; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td></tr>
-                    <tr><th><?php esc_html_e( 'Default role for new sign-ups', 'rar-woo-stock-order' ); ?></th><td><?php
-                    if ( $risky ) {
-                        /* translators: %s role */
-                        echo $warn . esc_html( sprintf( __( 'Stored as "%s" — overridden to Customer by this plugin. Fix it in Settings → General → New User Default Role.', 'rar-woo-stock-order' ), $r['stored_role'] ) ) . $end; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-                    } else {
-                        echo $ok . esc_html( $r['default_role'] ) . $end; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-                    }
-                    ?></td></tr>
-                    <tr><th><?php esc_html_e( 'WordPress "Anyone can register"', 'rar-woo-stock-order' ); ?></th><td><?php echo $r['wp_open'] ? $warn . esc_html__( 'On — not needed for a WooCommerce shop. Turn it off in Settings → General.', 'rar-woo-stock-order' ) . $end : $ok . esc_html__( 'Off', 'rar-woo-stock-order' ) . $end; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?> <a href="<?php echo esc_url( $settings ); ?>"><?php esc_html_e( 'Open', 'rar-woo-stock-order' ); ?></a></td></tr>
-                    <tr><th><?php esc_html_e( 'Customer sign-up on My Account page', 'rar-woo-stock-order' ); ?></th><td><?php echo $r['wc_account'] ? esc_html__( 'On (customers only). If bots keep registering, turn it off — customers can still create an account at checkout.', 'rar-woo-stock-order' ) : $ok . esc_html__( 'Off', 'rar-woo-stock-order' ) . $end; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?> <a href="<?php echo esc_url( $wc_acc ); ?>"><?php esc_html_e( 'Open', 'rar-woo-stock-order' ); ?></a></td></tr>
-                    <tr><th><?php esc_html_e( 'Staff login page protection', 'rar-woo-stock-order' ); ?></th><td><?php
-                    echo $ok . esc_html(
-                        sprintf(
-                            /* translators: 1: attempts, 2: attempts, 3: total failures */
-                            __( 'On — %1$d wrong passwords per username or %2$d per network in 15 minutes locks the form for 15 minutes. Failed attempts so far: %3$d.', 'rar-woo-stock-order' ),
-                            RAR_WSO_Security::USER_LIMIT,
-                            RAR_WSO_Security::IP_LIMIT,
-                            $r['failures']
-                        )
-                    ) . $end; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-                    ?><br><span class="description"><?php esc_html_e( 'This covers the /staff/ login form. Protect wp-login.php and XML-RPC with a site-wide security plugin too.', 'rar-woo-stock-order' ); ?></span></td></tr>
-                    <tr><th><?php esc_html_e( 'HTTPS', 'rar-woo-stock-order' ); ?></th><td><?php echo 0 === strpos( RAR_WSO_Plugin::staff_url(), 'https://' ) ? $ok . esc_html__( 'Yes', 'rar-woo-stock-order' ) . $end : $warn . esc_html__( 'No — staff passwords travel unencrypted. Enable SSL.', 'rar-woo-stock-order' ) . $end; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td></tr>
-                </tbody>
-            </table>
-        </div>
-        <?php
-    }
-
-    private function render_staff() {
-        $can   = RAR_WSO_Plugin::can_manage_staff();
-        $flash = get_transient( 'rar_wso_flash_' . get_current_user_id() );
-        if ( $flash ) {
-            delete_transient( 'rar_wso_flash_' . get_current_user_id() );
+        $user_id = absint( $_POST['user_id'] ?? 0 );
+        check_admin_referer( 'rar_wso_staff_update_' . $user_id );
+        $user = self::manageable_staff( $user_id );
+        if ( ! $user ) {
+            self::flash( 'error', __( 'Only Woo Stock & Order Staff accounts can be managed here.', 'rar-woo-stock-order' ) );
+            $this->back( 'staff' );
         }
-        ?>
-        <div class="rar-card" id="rar-staff">
-            <h2><?php esc_html_e( 'Staff accounts', 'rar-woo-stock-order' ); ?></h2>
-            <?php if ( is_array( $flash ) ) : ?>
-                <div class="notice notice-<?php echo 'error' === $flash['type'] ? 'error' : 'success'; ?> inline"><p><?php echo esc_html( $flash['text'] ); ?></p>
-                <?php if ( ! empty( $flash['link'] ) ) : ?>
-                    <p><input type="text" class="large-text code" readonly value="<?php echo esc_attr( $flash['link'] ); ?>" onclick="this.select()"></p>
-                <?php endif; ?></div>
-            <?php endif; ?>
 
-            <table class="widefat striped">
-                <thead><tr><th><?php esc_html_e( 'Name', 'rar-woo-stock-order' ); ?></th><th><?php esc_html_e( 'Username / email', 'rar-woo-stock-order' ); ?></th><th><?php esc_html_e( 'Role', 'rar-woo-stock-order' ); ?></th><th><?php esc_html_e( 'Last active in app', 'rar-woo-stock-order' ); ?></th><th><?php esc_html_e( 'Status', 'rar-woo-stock-order' ); ?></th><th><?php esc_html_e( 'Actions', 'rar-woo-stock-order' ); ?></th></tr></thead>
-                <tbody>
-                <?php
-                $rows = $this->staff_rows();
-                if ( ! $rows ) :
-                    ?>
-                    <tr><td colspan="6"><?php esc_html_e( 'No staff or Shop Manager accounts yet.', 'rar-woo-stock-order' ); ?></td></tr>
-                    <?php
-                endif;
-                foreach ( $rows as $u ) :
-                    $is_staff = array_values( (array) $u->roles ) === array( 'rar_wso_staff' );
-                    $paused   = RAR_WSO_Security::is_paused( $u->ID );
-                    ?>
-                    <tr>
-                        <td><strong><?php echo esc_html( $u->display_name ); ?></strong></td>
-                        <td><?php echo esc_html( $u->user_login ); ?><br><span class="description"><?php echo esc_html( $u->user_email ); ?></span></td>
-                        <td><?php echo $is_staff ? esc_html__( 'Staff', 'rar-woo-stock-order' ) : esc_html__( 'Shop Manager', 'rar-woo-stock-order' ); ?></td>
-                        <td><?php echo esc_html( $this->ago( get_user_meta( $u->ID, 'rar_wso_last_seen', true ) ) ); ?></td>
-                        <td><?php echo $paused ? '<span style="color:#b32d2e;font-weight:600">' . esc_html__( 'Paused', 'rar-woo-stock-order' ) . '</span>' : esc_html__( 'Active', 'rar-woo-stock-order' ); ?></td>
-                        <td>
-                        <?php if ( $can && $is_staff && get_current_user_id() !== $u->ID ) : ?>
-                            <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" class="rar-inline">
-                                <input type="hidden" name="action" value="rar_wso_staff_action">
-                                <input type="hidden" name="user_id" value="<?php echo esc_attr( $u->ID ); ?>">
-                                <?php wp_nonce_field( 'rar_wso_staff_' . $u->ID ); ?>
-                                <?php if ( $paused ) : ?>
-                                    <button class="button" name="do" value="resume"><?php esc_html_e( 'Resume', 'rar-woo-stock-order' ); ?></button>
-                                <?php else : ?>
-                                    <button class="button" name="do" value="pause" onclick="return confirm('<?php echo esc_js( __( 'Pause this account and sign it out everywhere?', 'rar-woo-stock-order' ) ); ?>')"><?php esc_html_e( 'Pause', 'rar-woo-stock-order' ); ?></button>
-                                <?php endif; ?>
-                                <button class="button" name="do" value="signout"><?php esc_html_e( 'Sign out everywhere', 'rar-woo-stock-order' ); ?></button>
-                                <button class="button" name="do" value="link"><?php esc_html_e( 'New password link', 'rar-woo-stock-order' ); ?></button>
-                            </form>
-                        <?php elseif ( ! $is_staff ) : ?>
-                            <span class="description"><?php esc_html_e( 'Managed under Users', 'rar-woo-stock-order' ); ?></span>
-                        <?php endif; ?>
-                        </td>
-                    </tr>
-                <?php endforeach; ?>
-                </tbody>
-            </table>
+        $allowed = isset( $_POST['caps'] ) && is_array( $_POST['caps'] ) ? array_map( 'sanitize_key', wp_unslash( $_POST['caps'] ) ) : array();
+        $summary = array();
+        foreach ( array_keys( self::staff_caps() ) as $cap ) {
+            if ( in_array( $cap, $allowed, true ) ) {
+                $user->remove_cap( $cap ); // back to the Staff role (allowed)
+            } else {
+                $user->add_cap( $cap, false ); // blocked for this person only
+                $summary[] = 'no ' . str_replace( 'rar_wso_', '', $cap );
+            }
+        }
 
-            <?php if ( $can ) : ?>
-                <h3><?php esc_html_e( 'Add a staff account', 'rar-woo-stock-order' ); ?></h3>
-                <p class="description"><?php esc_html_e( 'Creates a Woo Stock & Order Staff login (stock updates + order creation only, no wp-admin). The person gets an email to set their own password; you never see or send a password.', 'rar-woo-stock-order' ); ?></p>
-                <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" class="rar-add">
-                    <input type="hidden" name="action" value="rar_wso_add_staff">
-                    <?php wp_nonce_field( 'rar_wso_add_staff' ); ?>
-                    <label><?php esc_html_e( 'Full name', 'rar-woo-stock-order' ); ?><input type="text" name="display_name" required autocomplete="off"></label>
-                    <label><?php esc_html_e( 'Username', 'rar-woo-stock-order' ); ?><input type="text" name="user_login" required minlength="3" autocomplete="off" autocapitalize="none"></label>
-                    <label><?php esc_html_e( 'Email', 'rar-woo-stock-order' ); ?><input type="email" name="user_email" required autocomplete="off"></label>
-                    <button class="button button-primary"><?php esc_html_e( 'Create staff account', 'rar-woo-stock-order' ); ?></button>
-                </form>
-            <?php else : ?>
-                <p class="description"><?php esc_html_e( 'Only an Administrator can add or pause staff accounts (an Administrator can allow Shop Managers to do it in the settings above).', 'rar-woo-stock-order' ); ?></p>
-            <?php endif; ?>
-        </div>
-        <?php
+        $view = sanitize_key( wp_unslash( $_POST['view_orders'] ?? '' ) );
+        if ( in_array( $view, array( 'yes', 'no' ), true ) ) {
+            update_user_meta( $user_id, 'rar_wso_view_orders', $view );
+            $summary[] = 'order lists ' . $view;
+        } else {
+            delete_user_meta( $user_id, 'rar_wso_view_orders' );
+        }
+
+        $disc = trim( sanitize_text_field( wp_unslash( $_POST['max_discount'] ?? '' ) ) );
+        if ( '' !== $disc && is_numeric( $disc ) ) {
+            $disc = (string) min( self::personal_limit_cap(), max( 0, (float) $disc ) );
+            update_user_meta( $user_id, 'rar_wso_max_discount', $disc );
+            $summary[] = 'discount ' . $disc . '%';
+        } else {
+            delete_user_meta( $user_id, 'rar_wso_max_discount' );
+        }
+
+        $branch = sanitize_text_field( wp_unslash( $_POST['branch'] ?? '' ) );
+        $branch = function_exists( 'mb_substr' ) ? mb_substr( $branch, 0, 60 ) : substr( $branch, 0, 60 );
+        if ( '' !== $branch ) {
+            update_user_meta( $user_id, 'rar_wso_branch', $branch );
+            $summary[] = 'branch ' . $branch;
+        } else {
+            delete_user_meta( $user_id, 'rar_wso_branch' );
+        }
+
+        $name = sanitize_text_field( wp_unslash( $_POST['display_name'] ?? '' ) );
+        if ( '' !== $name && $name !== $user->display_name ) {
+            wp_update_user( array( 'ID' => $user_id, 'display_name' => $name ) );
+            $summary[] = 'name';
+        }
+
+        RAR_WSO_Audit::add( 'staff_updated', $user->display_name . ( $summary ? ': ' . implode( ', ', $summary ) : ': all defaults' ), $user_id );
+        /* translators: %s name */
+        self::flash( 'success', sprintf( __( 'Saved %s\'s permissions. They apply the next time the app loads.', 'rar-woo-stock-order' ), $user->display_name ) );
+        $this->back( 'staff', 'rarx-staff-' . $user_id );
     }
+
+    /* --------------------------------------------------------------------
+     * Tools & emergency actions
+     * ------------------------------------------------------------------ */
+
+    private static function pure_staff_ids() {
+        $ids = array();
+        foreach ( get_users( array( 'role' => 'rar_wso_staff', 'number' => 1000 ) ) as $u ) {
+            if ( self::is_plain_staff( $u ) && get_current_user_id() !== (int) $u->ID ) {
+                $ids[] = (int) $u->ID;
+            }
+        }
+        return $ids;
+    }
+
+    public static function clear_caches() {
+        global $wpdb;
+        $wpdb->query( "DELETE FROM {$wpdb->options} WHERE option_name LIKE '\\_transient\\_rar\\_wso\\_c\\_%' OR option_name LIKE '\\_transient\\_timeout\\_rar\\_wso\\_c\\_%'" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        foreach ( array( 'stock', 'overview', 'admin', 'period_today', 'period_7d', 'period_month', 'report_7', 'report_30', 'report_90' ) as $name ) {
+            delete_transient( 'rar_wso_c_' . $name );
+        }
+        update_option( 'rar_wso_report_ver', (string) microtime( true ), false );
+        update_option( 'rar_wso_stock_ver', (string) microtime( true ), false );
+    }
+
+    public function tool() {
+        $do = sanitize_key( wp_unslash( $_POST['do'] ?? '' ) );
+        check_admin_referer( 'rar_wso_tool_' . $do );
+        $need = array(
+            'clear_cache'     => 'manage_woocommerce',
+            'flush_rewrite'   => 'manage_woocommerce',
+            'test_digest'     => 'manage_woocommerce',
+            'clear_lockouts'  => 'staff',
+            'signout_all'     => 'staff',
+            'pause_all'       => 'staff',
+            'app_off'         => 'manage_options',
+            'app_on'          => 'manage_options',
+            'prune'           => 'manage_options',
+            'reset_settings'  => 'manage_options',
+            'import_settings' => 'manage_options',
+        );
+        if ( ! isset( $need[ $do ] ) ) {
+            $this->deny( __( 'Unknown action.', 'rar-woo-stock-order' ) );
+        }
+        $ok = 'staff' === $need[ $do ] ? RAR_WSO_Plugin::can_manage_staff() : current_user_can( $need[ $do ] );
+        if ( ! $ok ) {
+            $this->deny( __( 'You do not have permission to do this.', 'rar-woo-stock-order' ) );
+        }
+        $tab = sanitize_key( wp_unslash( $_POST['back'] ?? 'tools' ) );
+        $tab = isset( self::tabs()[ $tab ] ) ? $tab : 'tools';
+
+        switch ( $do ) {
+            case 'clear_cache':
+                self::clear_caches();
+                RAR_WSO_Audit::add( 'tool', 'Dashboard caches cleared' );
+                self::flash( 'success', __( 'Dashboard figures will be recalculated on the next load.', 'rar-woo-stock-order' ) );
+                break;
+            case 'flush_rewrite':
+                flush_rewrite_rules( false );
+                RAR_WSO_Audit::add( 'tool', 'Staff link repaired (rewrite rules flushed)' );
+                /* translators: %s URL */
+                self::flash( 'success', sprintf( __( 'Staff link repaired. Open %s to check it.', 'rar-woo-stock-order' ), RAR_WSO_Plugin::staff_url() ) );
+                break;
+            case 'test_digest':
+                $sent = RAR_WSO_Digest::send( true );
+                self::flash(
+                    $sent ? 'success' : 'error',
+                    $sent
+                        /* translators: %s emails */
+                        ? sprintf( __( 'Test summary sent to %s. Check the inbox (and spam folder).', 'rar-woo-stock-order' ), implode( ', ', RAR_WSO_Digest::recipients() ) )
+                        : __( 'The email could not be sent. WordPress mail is not working on this server — install an SMTP plugin (for example with your Hostinger email) and try again.', 'rar-woo-stock-order' )
+                );
+                break;
+            case 'clear_lockouts':
+                RAR_WSO_Security::clear_all_lockouts();
+                RAR_WSO_Audit::add( 'tool', 'All staff login locks cleared' );
+                self::flash( 'success', __( 'All staff login locks were cleared.', 'rar-woo-stock-order' ) );
+                break;
+            case 'signout_all':
+                $ids = self::pure_staff_ids();
+                foreach ( $ids as $id ) {
+                    WP_Session_Tokens::get_instance( $id )->destroy_all();
+                }
+                RAR_WSO_Audit::add( 'emergency', sprintf( 'Signed out all staff (%d accounts)', count( $ids ) ) );
+                /* translators: %d count */
+                self::flash( 'success', sprintf( _n( '%d staff account was signed out everywhere.', '%d staff accounts were signed out everywhere.', count( $ids ), 'rar-woo-stock-order' ), count( $ids ) ) );
+                break;
+            case 'pause_all':
+                $ids = self::pure_staff_ids();
+                foreach ( $ids as $id ) {
+                    update_user_meta( $id, 'rar_wso_suspended', '1' );
+                    WP_Session_Tokens::get_instance( $id )->destroy_all();
+                }
+                RAR_WSO_Audit::add( 'emergency', sprintf( 'Paused all staff (%d accounts)', count( $ids ) ) );
+                /* translators: %d count */
+                self::flash( 'success', sprintf( _n( '%d staff account is paused. Resume people one by one in the Staff tab.', '%d staff accounts are paused. Resume people one by one in the Staff tab.', count( $ids ), 'rar-woo-stock-order' ), count( $ids ) ) );
+                break;
+            case 'app_off':
+            case 'app_on':
+                $s            = RAR_WSO_Plugin::settings();
+                $s['enabled'] = 'app_on' === $do ? 'yes' : 'no';
+                do_action( 'rar_wso_settings_import' );
+                update_option( 'rar_wso_settings', $s );
+                RAR_WSO_Audit::add( 'emergency', 'app_on' === $do ? 'Staff app switched on' : 'Staff app switched off' );
+                self::flash( 'success', 'app_on' === $do ? __( 'The staff app is on again.', 'rar-woo-stock-order' ) : __( 'The staff app is off. Nobody can sign in or save until you switch it back on.', 'rar-woo-stock-order' ) );
+                break;
+            case 'prune':
+                $days = absint( $_POST['days'] ?? 0 );
+                if ( $days < 30 ) {
+                    self::flash( 'error', __( 'Keep at least the last 30 days of history.', 'rar-woo-stock-order' ) );
+                    break;
+                }
+                $a = RAR_WSO_Log::prune( $days );
+                $b = RAR_WSO_Audit::prune( max( 90, $days ) );
+                RAR_WSO_Audit::add( 'tool', sprintf( 'History older than %d days deleted (%d stock rows, %d audit rows)', $days, $a, $b ) );
+                /* translators: 1: rows, 2: rows, 3: days */
+                self::flash( 'success', sprintf( __( 'Deleted %1$d stock history rows and %2$d audit rows older than %3$d days.', 'rar-woo-stock-order' ), $a, $b, $days ) );
+                break;
+            case 'reset_settings':
+                $s        = RAR_WSO_Plugin::settings();
+                $defaults = RAR_WSO_Plugin::defaults();
+                $defaults['staff_slug'] = $s['staff_slug'];
+                $defaults['enabled']    = $s['enabled'];
+                do_action( 'rar_wso_settings_import' );
+                update_option( 'rar_wso_settings', $defaults );
+                RAR_WSO_Audit::add( 'settings_reset', 'Settings reset to defaults (staff link and on/off kept)' );
+                self::flash( 'success', __( 'Settings are back to the defaults. The staff link and the on/off switch were kept.', 'rar-woo-stock-order' ) );
+                break;
+            case 'import_settings':
+                $file = $_FILES['settings_file'] ?? null; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+                if ( ! is_array( $file ) || ! empty( $file['error'] ) || empty( $file['tmp_name'] ) || ! is_uploaded_file( $file['tmp_name'] ) || (int) $file['size'] > 200 * KB_IN_BYTES ) {
+                    self::flash( 'error', __( 'Choose a settings file (.json) exported from this plugin.', 'rar-woo-stock-order' ) );
+                    break;
+                }
+                $parsed = RAR_WSO_Export::parse_settings( file_get_contents( $file['tmp_name'] ) ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+                if ( is_wp_error( $parsed ) ) {
+                    self::flash( 'error', $parsed->get_error_message() );
+                    break;
+                }
+                do_action( 'rar_wso_settings_import' );
+                update_option( 'rar_wso_settings', $parsed );
+                RAR_WSO_Audit::add( 'settings_import', 'Settings restored from a backup file' );
+                self::flash( 'success', __( 'Settings restored from the backup file.', 'rar-woo-stock-order' ) );
+                break;
+        }
+        $this->back( $tab );
+    }
+
+    /* --------------------------------------------------------------------
+     * Exports (CSV downloads)
+     * ------------------------------------------------------------------ */
+
+    /** Activity filters from a request, in the shape the queries expect. */
+    public static function filters( $src ) {
+        $src = array_map(
+            static function ( $v ) {
+                return is_scalar( $v ) ? $v : '';
+            },
+            (array) $src
+        );
+        $day = static function ( $v, $end ) {
+            $v = sanitize_text_field( (string) $v );
+            if ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $v ) ) {
+                return '';
+            }
+            try {
+                $d = new DateTimeImmutable( $v . ( $end ? ' 23:59:59' : ' 00:00:00' ), wp_timezone() );
+            } catch ( Exception $e ) {
+                return '';
+            }
+            return RAR_WSO_Reports::gmt( $d );
+        };
+        return array(
+            'search'  => sanitize_text_field( wp_unslash( (string) ( $src['s'] ?? '' ) ) ),
+            'from'    => $day( wp_unslash( $src['from'] ?? '' ), false ),
+            'to'      => $day( wp_unslash( $src['to'] ?? '' ), true ),
+            'user_id' => absint( $src['user_f'] ?? 0 ),
+            'source'  => sanitize_key( wp_unslash( (string) ( $src['source_f'] ?? '' ) ) ),
+            'status'  => sanitize_key( wp_unslash( (string) ( $src['status_f'] ?? '' ) ) ),
+            'action'  => sanitize_key( wp_unslash( (string) ( $src['action_f'] ?? '' ) ) ),
+        );
+    }
+
+    public function export() {
+        check_admin_referer( 'rar_wso_export' );
+        $type = sanitize_key( wp_unslash( $_POST['type'] ?? '' ) );
+        if ( ! current_user_can( 'settings' === $type ? 'manage_options' : 'manage_woocommerce' ) ) {
+            $this->deny( __( 'You do not have permission to export this.', 'rar-woo-stock-order' ) );
+        }
+        $f = self::filters( $_POST );
+        switch ( $type ) {
+            case 'stock':
+                RAR_WSO_Export::stock();
+                break;
+            case 'movements':
+                RAR_WSO_Export::movements( $f );
+                break;
+            case 'orders':
+                RAR_WSO_Export::orders( $f );
+                break;
+            case 'audit':
+                RAR_WSO_Export::audit( $f );
+                break;
+            case 'settings':
+                RAR_WSO_Export::settings_json();
+                break;
+        }
+        $this->deny( __( 'Unknown export.', 'rar-woo-stock-order' ) );
+    }
+
+    /* --------------------------------------------------------------------
+     * Live refresh (Overview)
+     * ------------------------------------------------------------------ */
+
+    public function live() {
+        nocache_headers();
+        if ( ! check_ajax_referer( 'rar_wso_admin', 'nonce', false ) ) {
+            wp_send_json_error( array( 'message' => __( 'Session expired. Reload the page.', 'rar-woo-stock-order' ) ), 403 );
+        }
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            wp_send_json_error( array( 'message' => __( 'Not allowed.', 'rar-woo-stock-order' ) ), 403 );
+        }
+        ob_start();
+        RAR_WSO_Admin_Views::overview_live();
+        wp_send_json_success( array( 'html' => ob_get_clean(), 'at' => time() ) );
+    }
+
+    /* --------------------------------------------------------------------
+     * Page
+     * ------------------------------------------------------------------ */
 
     public function render() {
         if ( ! current_user_can( 'manage_woocommerce' ) ) {
             wp_die( esc_html__( 'You do not have permission to access this page.', 'rar-woo-stock-order' ) );
         }
-
-        $s        = RAR_WSO_Plugin::settings();
-        $statuses = wc_get_order_statuses();
-        ?>
-        <style>
-            .rar-wrap{max-width:1100px}
-            .rar-card{background:#fff;border:1px solid #dcdcde;border-radius:8px;padding:16px 20px;margin:16px 0}
-            .rar-card h2{margin-top:4px}
-            .rar-hero{border-left:4px solid #198754}
-            .rar-kv th{width:32%;font-weight:600}
-            .rar-inline{display:flex;gap:6px;flex-wrap:wrap}
-            .rar-add{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
-            .rar-add label{display:flex;flex-direction:column;gap:4px;font-weight:600}
-            .rar-add input{min-width:220px}
-            @media (max-width:782px){.rar-add input{min-width:0;width:100%}.rar-add label{flex:1 1 100%}}
-        </style>
-        <div class="wrap rar-wrap">
-            <h1><?php esc_html_e( 'RAR Woo Stock & Order', 'rar-woo-stock-order' ); ?> <span style="font-size:13px;color:#646970">v<?php echo esc_html( RAR_WSO_VERSION ); ?></span></h1>
-            <p><?php esc_html_e( 'Mobile-first staff PWA for stock updates and fast WooCommerce order creation.', 'rar-woo-stock-order' ); ?></p>
-
-            <div class="rar-card rar-hero">
-                <strong><?php esc_html_e( 'Staff App URL:', 'rar-woo-stock-order' ); ?></strong>
-                <a href="<?php echo esc_url( RAR_WSO_Plugin::staff_url() ); ?>" target="_blank" rel="noopener"><?php echo esc_html( RAR_WSO_Plugin::staff_url() ); ?></a>
-                <p style="margin-bottom:0"><?php esc_html_e( 'Open this link on Chrome and use Add to Home Screen for an app-like phone experience.', 'rar-woo-stock-order' ); ?></p>
-            </div>
-
-            <form method="post" action="options.php" class="rar-card">
-                <h2><?php esc_html_e( 'Settings', 'rar-woo-stock-order' ); ?></h2>
-                <?php settings_fields( 'rar_wso_group' ); ?>
-                <table class="form-table" role="presentation">
-                    <tr><th><?php esc_html_e( 'Enable staff app', 'rar-woo-stock-order' ); ?></th><td><label><input type="checkbox" name="rar_wso_settings[enabled]" value="1" <?php checked( $s['enabled'], 'yes' ); ?>> <?php esc_html_e( 'Enable private staff PWA', 'rar-woo-stock-order' ); ?></label></td></tr>
-                    <tr><th><label for="rar-wso-title"><?php esc_html_e( 'App title', 'rar-woo-stock-order' ); ?></label></th><td><input id="rar-wso-title" class="regular-text" type="text" name="rar_wso_settings[dashboard_title]" value="<?php echo esc_attr( $s['dashboard_title'] ); ?>"></td></tr>
-                    <tr><th><label for="rar-wso-slug"><?php esc_html_e( 'Staff URL slug', 'rar-woo-stock-order' ); ?></label></th><td><code><?php echo esc_html( home_url( '/' ) ); ?></code><input id="rar-wso-slug" type="text" name="rar_wso_settings[staff_slug]" value="<?php echo esc_attr( $s['staff_slug'] ); ?>" style="width:180px"><code>/</code></td></tr>
-                    <tr><th><?php esc_html_e( 'Default new order status', 'rar-woo-stock-order' ); ?></th><td><select name="rar_wso_settings[default_order_status]"><?php foreach ( $statuses as $key => $label ) : $slug = str_replace( 'wc-', '', $key ); if ( in_array( $slug, array( 'refunded', 'cancelled', 'failed', 'checkout-draft' ), true ) ) { continue; } ?><option value="<?php echo esc_attr( $slug ); ?>" <?php selected( $s['default_order_status'], $slug ); ?>><?php echo esc_html( $label ); ?></option><?php endforeach; ?></select></td></tr>
-                    <tr><th><?php esc_html_e( 'Order price override', 'rar-woo-stock-order' ); ?></th><td><label><input type="checkbox" name="rar_wso_settings[allow_price_override]" value="1" <?php checked( $s['allow_price_override'], 'yes' ); ?>> <?php esc_html_e( 'Allow staff to change item price while billing', 'rar-woo-stock-order' ); ?></label><p class="description"><?php esc_html_e( 'A lower rate counts toward the staff discount limit below, together with the discount.', 'rar-woo-stock-order' ); ?></p></td></tr>
-                    <tr><th><label for="rar-wso-maxdisc"><?php esc_html_e( 'Staff discount limit', 'rar-woo-stock-order' ); ?></label></th><td><input id="rar-wso-maxdisc" type="number" min="0" max="100" step="0.5" name="rar_wso_settings[staff_max_discount]" value="<?php echo esc_attr( $s['staff_max_discount'] ); ?>"> % <span class="description"><?php esc_html_e( 'Largest total reduction (discount + lower item rates) a staff user can give on one order, as a percent of the list-price subtotal. 0 = no reductions. Shop Managers and Administrators are not limited.', 'rar-woo-stock-order' ); ?></span></td></tr>
-                    <tr><th><label for="rar-wso-ship-dhaka"><?php esc_html_e( 'Shipping — Inside Dhaka', 'rar-woo-stock-order' ); ?></label></th><td><input id="rar-wso-ship-dhaka" type="number" min="0" step="0.01" name="rar_wso_settings[shipping_dhaka]" value="<?php echo esc_attr( $s['shipping_dhaka'] ); ?>"> <span class="description"><?php esc_html_e( 'Filled in automatically when the District is Dhaka. Staff can still change it per order.', 'rar-woo-stock-order' ); ?></span></td></tr>
-                    <tr><th><label for="rar-wso-ship-out"><?php esc_html_e( 'Shipping — Outside Dhaka', 'rar-woo-stock-order' ); ?></label></th><td><input id="rar-wso-ship-out" type="number" min="0" step="0.01" name="rar_wso_settings[shipping_outside]" value="<?php echo esc_attr( $s['shipping_outside'] ); ?>"> <span class="description"><?php esc_html_e( 'Used for every other district.', 'rar-woo-stock-order' ); ?></span></td></tr>
-                    <tr><th><label for="rar-wso-shipping"><?php esc_html_e( 'Default shipping charge', 'rar-woo-stock-order' ); ?></label></th><td><input id="rar-wso-shipping" type="number" min="0" step="0.01" name="rar_wso_settings[default_shipping]" value="<?php echo esc_attr( $s['default_shipping'] ); ?>"> <span class="description"><?php esc_html_e( 'Used before a district is chosen, or when the two fields above are empty.', 'rar-woo-stock-order' ); ?></span></td></tr>
-                    <tr><th><label for="rar-wso-low"><?php esc_html_e( 'Low stock level', 'rar-woo-stock-order' ); ?></label></th><td><input id="rar-wso-low" type="number" min="1" step="1" name="rar_wso_settings[low_stock_threshold]" value="<?php echo esc_attr( $s['low_stock_threshold'] ); ?>"> <span class="description"><?php esc_html_e( 'Quantities from 1 up to this number show orange (low). Above it shows green; 0 shows red.', 'rar-woo-stock-order' ); ?></span></td></tr>
-                    <tr><th><?php esc_html_e( 'Staff order lists', 'rar-woo-stock-order' ); ?></th><td><label><input type="checkbox" name="rar_wso_settings[staff_view_orders]" value="1" <?php checked( $s['staff_view_orders'], 'yes' ); ?>> <?php esc_html_e( 'Let staff open today / 7-day / month order lists (view only). Status changes, All Orders, Live Orders and sales reports stay Shop Manager only.', 'rar-woo-stock-order' ); ?></label></td></tr>
-                    <tr><th><?php esc_html_e( 'Staff accounts', 'rar-woo-stock-order' ); ?></th><td><label><input type="checkbox" name="rar_wso_settings[managers_add_staff]" value="1" <?php checked( $s['managers_add_staff'], 'yes' ); ?> <?php disabled( ! current_user_can( 'promote_users' ) ); ?>> <?php esc_html_e( 'Shop Managers may add, pause and sign out staff accounts (Administrators always can).', 'rar-woo-stock-order' ); ?></label></td></tr>
-                    <tr><th><label for="rar-wso-bname"><?php esc_html_e( 'Business name on slip', 'rar-woo-stock-order' ); ?></label></th><td><input id="rar-wso-bname" class="regular-text" type="text" name="rar_wso_settings[business_name]" value="<?php echo esc_attr( $s['business_name'] ); ?>" placeholder="<?php echo esc_attr( wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) ); ?>"></td></tr>
-                    <tr><th><label for="rar-wso-footer"><?php esc_html_e( 'Slip footer line', 'rar-woo-stock-order' ); ?></label></th><td><input id="rar-wso-footer" class="regular-text" type="text" name="rar_wso_settings[slip_footer]" value="<?php echo esc_attr( $s['slip_footer'] ); ?>"></td></tr>
-                </table>
-                <?php submit_button(); ?>
-            </form>
-
-            <?php $this->render_staff(); ?>
-            <?php $this->render_security(); ?>
-
-            <div class="rar-card">
-                <h2><?php esc_html_e( 'Permissions', 'rar-woo-stock-order' ); ?></h2>
-                <p><?php esc_html_e( 'Staff can use the private app, update stock and create WooCommerce orders. Item-price override remains optional and counts toward the discount limit.', 'rar-woo-stock-order' ); ?></p>
-                <p><strong><?php esc_html_e( 'Shop Manager tools:', 'rar-woo-stock-order' ); ?></strong> <?php esc_html_e( 'Administrator and Shop Manager users also get Order Control (All Orders, Live Orders, Processing with status changes) and the Sales & Growth report inside the staff app.', 'rar-woo-stock-order' ); ?></p>
-                <p><strong><?php esc_html_e( 'Catalog management:', 'rar-woo-stock-order' ); ?></strong> <?php esc_html_e( 'Product creation, editing and deletion intentionally stay in WooCommerce → Products for Administrator / Shop Manager users. The staff app does not duplicate those controls.', 'rar-woo-stock-order' ); ?></p>
-            </div>
-        </div>
-        <?php
+        RAR_WSO_Admin_Views::page( self::current_tab() );
     }
 }

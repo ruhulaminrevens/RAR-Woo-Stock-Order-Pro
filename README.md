@@ -2,13 +2,13 @@
 
 Mobile-first **WooCommerce stock manager and staff order entry app (PWA)** for teams that work mainly from their phones.
 
-![Version](https://img.shields.io/badge/version-1.3.0-15234a) ![WordPress](https://img.shields.io/badge/WordPress-6.3%2B-21759b) ![WooCommerce](https://img.shields.io/badge/WooCommerce-8.0%2B-7f54b3) ![PHP](https://img.shields.io/badge/PHP-7.4%2B-777bb4)
+![Version](https://img.shields.io/badge/version-1.4.0-15234a) ![WordPress](https://img.shields.io/badge/WordPress-6.3%2B-21759b) ![WooCommerce](https://img.shields.io/badge/WooCommerce-8.0%2B-7f54b3) ![PHP](https://img.shields.io/badge/PHP-7.4%2B-777bb4)
 
 ## ⬇️ Download
 
-### [Download RAR Woo Stock & Order v1.3.0 (ZIP)](https://github.com/ruhulaminrevens/RAR-Woo-Stock-Order-Pro/raw/main/dist/rar-woo-stock-order-v1.3.0.zip)
+### [Download RAR Woo Stock & Order v1.4.0 (ZIP)](https://github.com/ruhulaminrevens/RAR-Woo-Stock-Order-Pro/raw/main/dist/rar-woo-stock-order-v1.4.0.zip)
 
-- **File:** `rar-woo-stock-order-v1.3.0.zip`
+- **File:** `rar-woo-stock-order-v1.4.0.zip`
 - **Install:** WordPress → Plugins → Add New → **Upload Plugin**
 - **Upgrade:** choose **Replace current with uploaded**
 
@@ -22,8 +22,8 @@ Mobile-first **WooCommerce stock manager and staff order entry app (PWA)** for t
    - If an older version is installed, choose **Replace current with uploaded**.
 4. **Activate** the plugin.
 5. If you use LiteSpeed Cache: **LiteSpeed Cache → Toolbox → Purge All**.
-6. Check the settings in **WooCommerce → Stock & Order**.
-7. Add staff in **WooCommerce → Stock & Order → Staff accounts** (they get a set-password email). Never let staff sign up themselves.
+6. Open **WooCommerce → Stock & Order → Security & Health** and fix anything red, then review **Settings**.
+7. Add staff in **WooCommerce → Stock & Order → Staff → Add staff** (they get a set-password link). Never let staff sign up themselves. Print the **QR code** poster so staff can install the app.
 
 ## 📱 Installing the app on a phone
 
@@ -36,7 +36,23 @@ Mobile-first **WooCommerce stock manager and staff order entry app (PWA)** for t
 - Long-press the app icon for the **Create Order** and **Stock Manager** shortcuts (Android).
 - The site must be on **HTTPS**, otherwise the phone won't install the app.
 
-## What's new in v1.3.0: concurrency, security, staff accounts
+## What's new in v1.4.0: the Control Center
+
+**WooCommerce → Stock & Order** is now a responsive, tabbed control panel:
+
+| Tab | What it does |
+|---|---|
+| **Overview** | Live KPIs (auto-refresh), alerts, 14-day staff-app vs website chart, health score, team leaderboard, stock watch, activity timeline, quick actions |
+| **Staff** | Search / filter people; per-person discount limit, branch, order-list access, block stock / orders / rate change; pause, sign out everywhere, password link (copy / WhatsApp) |
+| **Activity** | Stock movements, staff orders, admin & security audit log — with filters and CSV export |
+| **Settings** | Brand colour + logo (live preview), slip phone/address, payment methods + extras, free delivery amount, stock reasons, login limits, staff session length, daily summary email, history retention, WordPress shortcuts |
+| **Security & Health** | 20+ checks with score and fix links, login protection stats, emergency sign-out / pause / app off |
+| **Tools** | Stock valuation CSV (with COGS cost value when enabled), exports, cache & staff-link repair, test email, settings backup / import / reset, system report |
+| **Help** | Quick start, roles matrix, FAQ |
+
+Also new: an admin-bar menu, a Dashboard widget, a **Staff** column on the orders list, a "Staff app" box on orders, a stock history box on products, and a printable **QR poster** for installing the app. Tests: `tests/smoke.php` **102 checks**. See [CHANGELOG.md](CHANGELOG.md).
+
+## Earlier in v1.3.0: concurrency, security, staff accounts
 
 | Problem (v1.2.2) | Fix (v1.3.0) |
 |---|---|
@@ -50,7 +66,7 @@ Mobile-first **WooCommerce stock manager and staff order entry app (PWA)** for t
 | No way to add/pause staff; staff role could be handed out by sign-up | **Staff accounts** panel; staff role blocked from public registration |
 | Phone back button left the app; half-typed orders were lost | Back closes the panel; order draft autosaves |
 
-Tests: `tests/smoke.php` **72 checks**, HPOS on and off. Full details in [RELEASE_NOTES.md](RELEASE_NOTES.md).
+Tests (v1.3.0): 72 checks, HPOS on and off. Full details in [RELEASE_NOTES.md](RELEASE_NOTES.md).
 
 ## Earlier in v1.2.2: order and report hardening
 
@@ -85,14 +101,14 @@ RAR-Woo-Stock-Order-Pro/
 ├── README.md                          ← this page
 ├── .github/workflows/validate.yml    ← automated checks (CI)
 ├── dist/
-│   └── rar-woo-stock-order-v1.3.0.zip ← installable plugin (download this)
+│   └── rar-woo-stock-order-v1.4.0.zip ← installable plugin (download this)
 ├── rar-woo-stock-order.php            ← plugin source code
 ├── includes/
 ├── assets/ (css, js, icons)
 ├── CHANGELOG.md
 ├── RELEASE_NOTES.md
 ├── readme.txt
-└── tests/smoke.php                    ← runtime tests (72 checks)
+└── tests/smoke.php                    ← runtime tests (102 checks)
 ```
 
 ## What this plugin is for
@@ -180,7 +196,7 @@ Continue to use native WooCommerce screens for:
 
 Open:
 
-**WooCommerce → Stock & Order**
+**WooCommerce → Stock & Order → Settings** (Administrators; Shop Managers can view)
 
 Available settings:
 
@@ -196,6 +212,12 @@ Available settings:
 - Staff order lists (view only)
 - Business name and footer line on the sales slip
 - Shop Managers may add / pause staff (Administrator only)
+- Brand colour and logo (app header, login, slip, daily email), slip phone and address
+- Payment methods on/off, extra methods, default method
+- Free delivery from an amount; stock-change reasons
+- Login limits (per username / per network), lock time, staff "keep me signed in" days
+- Daily summary email (recipients, hour), history retention
+- Admin bar menu, Dashboard widget, Staff column on the orders list
 
 ## Staff accounts (no public registration)
 

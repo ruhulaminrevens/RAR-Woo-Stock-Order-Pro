@@ -154,6 +154,17 @@ function rar_staff_login_post( $login, $pwd, $with_nonce = true ) {
 	return array( (int) wp_remote_retrieve_response_code( $res ), wp_remote_retrieve_body( $res ) );
 }
 
+/** GET/POST a wp-admin URL as the logged-in test user. Returns [status, body, headers]. */
+function rar_admin( $path, $post = null ) {
+	$args = array( 'timeout' => 60, 'redirection' => 0, 'cookies' => $GLOBALS['rar_auth'], 'sslverify' => false );
+	$url  = $GLOBALS['rar_base'] . '/wp-admin/' . $path;
+	$res  = null === $post ? wp_remote_get( $url, $args ) : wp_remote_post( $url, array_merge( $args, array( 'body' => $post ) ) );
+	if ( is_wp_error( $res ) ) {
+		return array( 0, $res->get_error_message(), array() );
+	}
+	return array( (int) wp_remote_retrieve_response_code( $res ), wp_remote_retrieve_body( $res ), wp_remote_retrieve_headers( $res ) );
+}
+
 // Test-only probe: records what other plugins see when WooCommerce announces a new order.
 $probe_file = WP_CONTENT_DIR . '/mu-plugins/rar-smoke-probe.php';
 wp_mkdir_p( dirname( $probe_file ) );
@@ -432,11 +443,11 @@ try {
 	rar_ok( false !== strpos( wp_remote_retrieve_body( $page ), 'rar_wso_login_nonce' ), 'login form carries a CSRF token' );
 	list( $st, $body ) = rar_staff_login_post( 'rartest_staff', 'x', false );
 	rar_ok( false !== strpos( $body, 'open too long' ), 'login without the token is refused', "$st" );
-	for ( $i = 0; $i < RAR_WSO_Security::USER_LIMIT; $i++ ) {
+	for ( $i = 0; $i < RAR_WSO_Security::user_limit(); $i++ ) {
 		rar_staff_login_post( 0 === $i % 2 ? 'rartest_staff' : 'rartest_staff@example.test', 'wrong-' . $i ); // username and email share one counter
 	}
 	list( $st, $body ) = rar_staff_login_post( 'rartest_staff', 'still-wrong' );
-	rar_ok( 429 === $st && false !== stripos( $body, 'Too many wrong passwords' ), 'after ' . RAR_WSO_Security::USER_LIMIT . ' wrong passwords the form is locked (429)', "$st" );
+	rar_ok( 429 === $st && false !== stripos( $body, 'Too many wrong passwords' ), 'after ' . RAR_WSO_Security::user_limit() . ' wrong passwords the form is locked (429)', "$st" );
 	RAR_WSO_Security::clear_failures( 'rartest_staff' );
 	delete_transient( 'rar_wso_lf_ip_' . md5( RAR_WSO_Security::client_ip() ) );
 	global $wpdb;
@@ -518,6 +529,110 @@ try {
 	$after = RAR_WSO_Reports::summarize( $rows );
 	rar_ok( abs( ( $before['sales'] - $after['sales'] ) - 300 ) < 0.01, 'net sales drop by exactly the ৳300 refund', 'before ' . $before['sales'] . ' after ' . $after['sales'] );
 	rar_ok( abs( $after['refunds'] - $before['refunds'] - 300 ) < 0.01, 'refunds total shows ৳300' );
+
+	echo "\nAdmin Control Center (v1.4.0)\n";
+	delete_transient( '_wc_activation_redirect' );
+	rar_login( $admin );
+	$bad = array();
+	foreach ( array( 'overview' => 'rarx-kpis', 'staff' => 'rarx-people', 'activity' => 'rarx-filters', 'settings' => 'rarx-settings-form', 'security' => 'rarx-checklist', 'tools' => 'rarx-export-grid', 'help' => 'rarx-faq' ) as $tab => $marker ) {
+		list( $st, $body ) = rar_admin( 'admin.php?page=rar-wso&tab=' . $tab );
+		if ( 200 !== $st || false === strpos( $body, $marker ) || preg_match( '/(Fatal error|Warning:|Notice:|Deprecated:)/', $body ) ) {
+			$bad[] = "{$tab}:{$st}";
+		}
+	}
+	rar_ok( ! $bad, 'all 7 Control Center tabs render for an admin without PHP errors', implode( ' ', $bad ) );
+	list( $st, $r ) = array( 0, null );
+	$res = wp_remote_post( $GLOBALS['rar_base'] . '/wp-admin/admin-ajax.php', array( 'timeout' => 60, 'cookies' => $GLOBALS['rar_auth'], 'body' => array( 'action' => 'rar_wso_admin_live', 'nonce' => wp_create_nonce( 'rar_wso_admin' ) ) ) );
+	$live = json_decode( wp_remote_retrieve_body( $res ), true );
+	rar_ok( ! empty( $live['success'] ) && false !== strpos( (string) $live['data']['html'], 'rarx-kpi' ), 'overview live refresh returns fresh KPI cards' );
+	rar_login( $manager );
+	list( $st ) = rar_admin( 'admin.php?page=rar-wso&tab=overview' );
+	rar_ok( 200 === $st, 'shop manager can open the Control Center', "$st" );
+	rar_login( $staff );
+	list( $st, $body ) = rar_admin( 'admin.php?page=rar-wso' );
+	rar_ok( 200 !== $st || false === strpos( $body, 'rarx-kpis' ), 'staff accounts cannot open the Control Center', "$st" );
+
+	echo "\nPer-staff permissions (v1.4.0)\n";
+	rar_login( $admin );
+	list( $st ) = rar_admin( 'admin-post.php', array( 'action' => 'rar_wso_staff_update', 'user_id' => $staff2, '_wpnonce' => wp_create_nonce( 'rar_wso_staff_update_' . $staff2 ), 'caps' => array( 'rar_wso_create_orders' ), 'view_orders' => 'no', 'max_discount' => '5', 'branch' => 'RARTEST Branch' ) );
+	wp_cache_flush();
+	rar_ok( 302 === $st && ! user_can( $staff2, 'rar_wso_manage_stock' ) && user_can( $staff2, 'rar_wso_create_orders' ) && 'RARTEST Branch' === get_user_meta( $staff2, 'rar_wso_branch', true ), 'admin blocks stock updates for one staff member and sets a branch', "$st" );
+	rar_login( $staff2 );
+	list( $st ) = rar_call( 'stock_update', array( 'product_id' => $p2, 'qty' => 40, 'reason' => 'x' ) );
+	rar_ok( 403 === $st, 'blocked staff member cannot update stock', "$st" );
+	list( $st ) = rar_call( 'orders', array( 'scope' => 'today' ) );
+	rar_ok( 403 === $st, 'order lists hidden for that person only', "$st" );
+	list( $st ) = rar_call( 'create_order', array( 'payload' => rar_payload( array( array( 'id' => $p2, 'qty' => 2 ) ), array( 'discount' => 100 ) ) ) );
+	rar_ok( 422 === $st, 'personal 5% limit refuses a 10% discount (shop limit is 20%)', "$st" );
+	list( $st, $r ) = rar_call( 'create_order', array( 'payload' => rar_payload( array( array( 'id' => $p2, 'qty' => 2 ) ), array( 'discount' => 50 ) ) ) );
+	$created[] = (int) ( $r['data']['order_id'] ?? 0 );
+	rar_ok( 200 === $st, 'personal 5% limit allows 5%', "$st" );
+	rar_login( $staff );
+	list( $st ) = rar_call( 'orders', array( 'scope' => 'today' ) );
+	rar_ok( 200 === $st, 'other staff keep the shop defaults', "$st" );
+	$audit = RAR_WSO_Audit::query( array( 'action' => 'staff_updated', 'per_page' => 1 ) );
+	rar_ok( $audit['items'] && (int) $audit['items'][0]['object'] === $staff2, 'permission change is written to the audit log' );
+	rar_login( $admin );
+	rar_admin( 'admin-post.php', array( 'action' => 'rar_wso_staff_update', 'user_id' => $staff2, '_wpnonce' => wp_create_nonce( 'rar_wso_staff_update_' . $staff2 ), 'caps' => array_keys( RAR_WSO_Admin::staff_caps() ) ) );
+	wp_cache_flush();
+	rar_ok( user_can( $staff2, 'rar_wso_manage_stock' ) && '' === get_user_meta( $staff2, 'rar_wso_max_discount', true ), 'saving with defaults restores the Staff role permissions' );
+
+	echo "\nSettings form (v1.4.0)\n";
+	$before = RAR_WSO_Plugin::settings();
+	list( $st ) = rar_admin( 'options.php', array( 'option_page' => 'rar_wso_group', 'action' => 'update', '_wpnonce' => wp_create_nonce( 'rar_wso_group-options' ), '_wp_http_referer' => '/wp-admin/admin.php?page=rar-wso&tab=settings', 'rar_wso_settings' => array_merge( $before, array( '_form' => '1', 'enabled' => '1', 'brand_color' => '#0A7F6A', 'staff_slug' => 'wp-admin', 'payment_methods' => array( 'cod', 'bkash' ), 'payment_extra' => "Rocket\n=cmd()", 'payment_default' => 'bkash', 'free_shipping_over' => '3000', 'login_user_limit' => '2', 'log_retention_days' => '7', 'allow_price_override' => '1', 'staff_view_orders' => '1', 'digest_enabled' => null, 'admin_bar_link' => '1', 'dashboard_widget' => '1', 'order_column' => '1' ) ) ) );
+	wp_cache_flush();
+	$s = RAR_WSO_Plugin::settings();
+	rar_ok( 302 === $st && '#0a7f6a' === $s['brand_color'] && 'staff' === $s['staff_slug'] && '3' === $s['login_user_limit'] && '30' === $s['log_retention_days'] && 'no' === $s['digest_enabled'] && 'yes' === $s['enabled'], 'settings are validated (colour, reserved slug kept, limits clamped, unticked box off)', "$st " . wp_json_encode( array_intersect_key( $s, array_flip( array( 'brand_color', 'staff_slug', 'login_user_limit', 'log_retention_days', 'digest_enabled', 'enabled' ) ) ) ) );
+	$pay = RAR_WSO_Ajax::enabled_payment_options();
+	rar_ok( isset( $pay['cod'], $pay['bkash'], $pay['x-rocket'] ) && ! isset( $pay['nagad'] ) && 'bkash' === RAR_WSO_Ajax::default_payment(), 'payment methods: ticked built-ins + extra "Rocket"', wp_json_encode( $pay ) );
+	$audit = RAR_WSO_Audit::query( array( 'action' => 'settings_saved', 'per_page' => 1 ) );
+	rar_ok( $audit['items'] && false !== strpos( $audit['items'][0]['message'], 'brand_color' ), 'settings change is audited with the changed keys' );
+	rar_login( $staff );
+	list( $st, $r ) = rar_call( 'create_order', array( 'payload' => rar_payload( array( array( 'id' => $p2, 'qty' => 1 ) ), array( 'payment' => 'nagad' ) ) ) );
+	$no = wc_get_order( (int) ( $r['data']['order_id'] ?? 0 ) );
+	$created[] = $no ? $no->get_id() : 0;
+	rar_ok( 200 === $st && $no && 'bkash' === $no->get_payment_method(), 'a switched-off payment method falls back to the default', $no ? $no->get_payment_method() : "$st" );
+	list( $st, $r ) = rar_call( 'create_order', array( 'payload' => rar_payload( array( array( 'id' => $p2, 'qty' => 1 ) ), array( 'payment' => 'x-rocket' ) ) ) );
+	$no = wc_get_order( (int) ( $r['data']['order_id'] ?? 0 ) );
+	$created[] = $no ? $no->get_id() : 0;
+	rar_ok( 200 === $st && $no && 'Rocket' === $no->get_payment_method_title(), 'extra payment method is stored with its name', $no ? $no->get_payment_method_title() : "$st" );
+	$app = wp_remote_retrieve_body( wp_remote_get( RAR_WSO_Plugin::staff_url(), array( 'timeout' => 30, 'cookies' => $GLOBALS['rar_auth'] ) ) );
+	rar_ok( false !== strpos( $app, '--top:#0a7f6a' ) && false !== strpos( $app, '"freeShipOver":3000' ) && false !== strpos( $app, '"payDefault":"bkash"' ), 'staff app picks up brand colour, free delivery and default payment' );
+	update_option( 'rar_wso_settings', $before );
+
+	echo "\nExports & tools (v1.4.0)\n";
+	rar_login( $admin );
+	$x = function ( $type, $extra = array() ) {
+		return rar_admin( 'admin-post.php', array_merge( array( 'action' => 'rar_wso_export', 'type' => $type, '_wpnonce' => wp_create_nonce( 'rar_wso_export' ) ), $extra ) );
+	};
+	list( $st, $body, $h ) = $x( 'stock' );
+	rar_ok( 200 === $st && 0 === strpos( $body, "\xEF\xBB\xBF" . '"Product ID"' ) && false !== strpos( $body, 'RARTEST Alpha' ) && false !== strpos( (string) ( $h['content-type'] ?? '' ), 'text/csv' ), 'stock valuation CSV (UTF-8 BOM, every product)', "$st " . substr( $body, 0, 60 ) );
+	list( $st, $body ) = $x( 'orders', array( 'from' => wp_date( 'Y-m-d' ) ) );
+	rar_ok( 200 === $st && false !== strpos( $body, '#' . wc_get_order( $oid )->get_order_number() ) && false !== strpos( $body, 'RARTEST Customer' ), 'staff orders CSV lists today\'s staff orders', "$st" );
+	list( $st, $body ) = $x( 'movements' );
+	rar_ok( 200 === $st && false !== strpos( $body, 'Order #' ), 'stock movements CSV', "$st" );
+	list( $st, $body ) = $x( 'audit' );
+	rar_ok( 200 === $st && false !== strpos( $body, 'Staff permissions changed' ), 'audit log CSV', "$st" );
+	list( $st, $body ) = $x( 'settings' );
+	$json = json_decode( $body, true );
+	rar_ok( 200 === $st && 'rar-woo-stock-order' === ( $json['plugin'] ?? '' ) && isset( $json['settings']['brand_color'] ), 'settings backup is valid JSON', "$st" );
+	rar_login( $manager );
+	list( $st ) = $x( 'settings' );
+	rar_ok( 403 === $st, 'shop manager cannot download the settings backup', "$st" );
+	list( $st ) = rar_admin( 'admin-post.php', array( 'action' => 'rar_wso_tool', 'do' => 'reset_settings', '_wpnonce' => wp_create_nonce( 'rar_wso_tool_reset_settings' ) ) );
+	rar_ok( 403 === $st, 'shop manager cannot reset settings', "$st" );
+	list( $st ) = rar_admin( 'admin-post.php', array( 'action' => 'rar_wso_tool', 'do' => 'clear_cache', '_wpnonce' => wp_create_nonce( 'rar_wso_tool_clear_cache' ) ) );
+	rar_ok( 302 === $st, 'shop manager can clear dashboard caches', "$st" );
+	list( $st ) = rar_admin( 'admin-post.php', array( 'action' => 'rar_wso_tool', 'do' => 'clear_cache', '_wpnonce' => 'bad' ) );
+	rar_ok( 403 === $st, 'tools refuse a bad nonce', "$st" );
+	rar_login( $admin );
+	add_filter( 'pre_wp_mail', '__return_true' );
+	rar_ok( RAR_WSO_Digest::send( true ) && false !== strpos( RAR_WSO_Digest::html( RAR_WSO_Digest::data(), 'RARTEST Biz', 'today' ), 'RARTEST Biz' ), 'daily summary email builds and sends' );
+	remove_filter( 'pre_wp_mail', '__return_true' );
+	$checks = RAR_WSO_Health::checks();
+	$score  = RAR_WSO_Health::score( $checks );
+	rar_ok( count( $checks ) >= 15 && $score >= 0 && $score <= 100, "health checks run ({$score}/100)" );
+	rar_ok( wp_next_scheduled( 'rar_wso_housekeeping' ) || ( do_action( 'admin_init' ) || wp_next_scheduled( 'rar_wso_housekeeping' ) ), 'daily housekeeping is scheduled' );
 
 	echo "\nPWA endpoints\n";
 	rar_ok( false !== strpos( RAR_WSO_PWA::manifest_url(), 'rar_wso_manifest=1' ) && false !== strpos( RAR_WSO_PWA::sw_url(), 'rar_wso_sw=1' ), 'cache-safe manifest / service worker URLs' );

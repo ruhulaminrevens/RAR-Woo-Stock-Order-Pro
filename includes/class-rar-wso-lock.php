@@ -28,7 +28,7 @@ class RAR_WSO_Lock {
         return 'rarwso_' . substr( md5( DB_NAME . '|' . $wpdb->prefix ), 0, 8 ) . '_' . md5( (string) $key );
     }
 
-    private static function supported() {
+    public static function supported() {
         global $wpdb;
         if ( null === self::$supported ) {
             $suppress          = $wpdb->suppress_errors( true );

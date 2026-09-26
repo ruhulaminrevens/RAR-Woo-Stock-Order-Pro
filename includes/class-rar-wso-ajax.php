@@ -18,7 +18,11 @@ class RAR_WSO_Ajax {
 
     private static $stock_bumped = false;
 
+    /** The running instance, for the admin screens (stock figures share one cache). */
+    public static $instance = null;
+
     public function __construct() {
+        self::$instance = $this;
         // Dashboard stock figures are cached briefly; any stock/product change starts a fresh cache.
         foreach ( array(
             'woocommerce_product_set_stock',
@@ -218,7 +222,7 @@ class RAR_WSO_Ajax {
     }
 
     /** Published, stock-holding products and variations (variable parents, grouped and external excluded). */
-    private function product_base_sql() {
+    public function product_base_sql() {
         global $wpdb;
         $lookup = $wpdb->wc_product_meta_lookup;
 
@@ -237,7 +241,7 @@ class RAR_WSO_Ajax {
               )";
     }
 
-    private function level_sql( $level ) {
+    public function level_sql( $level ) {
         $t = (int) RAR_WSO_Plugin::low_threshold();
         switch ( $level ) {
             case 'ok':
@@ -277,7 +281,7 @@ class RAR_WSO_Ajax {
      * any stock or product changes. Several phones refreshing the dashboard every minute
      * no longer re-run the full catalog queries each time.
      */
-    private function dashboard_stock() {
+    public function dashboard_stock() {
         $ver = (string) get_option( 'rar_wso_stock_ver', '0' ) . '|' . RAR_WSO_Plugin::low_threshold() . '|' . RAR_WSO_VERSION;
         $hit = get_transient( 'rar_wso_c_stock' );
         if ( is_array( $hit ) && ( $hit['ver'] ?? '' ) === $ver && time() - (int) ( $hit['at'] ?? 0 ) < 2 * MINUTE_IN_SECONDS ) {
@@ -289,6 +293,7 @@ class RAR_WSO_Ajax {
             'out'    => $this->stock_names( 'out' ),
         );
         set_transient( 'rar_wso_c_stock', array( 'ver' => $ver, 'at' => time(), 'data' => $data ), 2 * MINUTE_IN_SECONDS );
+        RAR_WSO_Plugin::set_attention( 'negative', $data['counts']['negative'] );
         return $data;
     }
 
@@ -320,7 +325,7 @@ class RAR_WSO_Ajax {
         );
     }
 
-    private function stock_names( $level, $limit = 5 ) {
+    public function stock_names( $level, $limit = 5 ) {
         global $wpdb;
         $sql = 'SELECT p.ID ' . $this->product_base_sql() . ' AND ' . $this->level_sql( $level ) . ' ORDER BY COALESCE(l.stock_quantity, 0) ASC, p.post_title ASC LIMIT ' . (int) $limit;
         $ids = $wpdb->get_col( $sql ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
@@ -1208,16 +1213,56 @@ class RAR_WSO_Ajax {
         return preg_match( '/^01[3-9]\d{8}$/', $digits ) ? $digits : '';
     }
 
+    /** Every payment option the shop knows: built-in ones, extra ones from the settings, then the filter. */
     public static function payment_options() {
-        return (array) apply_filters(
-            'rar_wso_payment_options',
-            array(
-                'cod'   => __( 'Cash on delivery', 'woocommerce' ),
-                'bkash' => 'bKash',
-                'nagad' => 'Nagad',
-                'cash'  => __( 'Cash (paid at shop)', 'rar-woo-stock-order' ),
-            )
+        $options = array(
+            'cod'   => __( 'Cash on delivery', 'woocommerce' ),
+            'bkash' => 'bKash',
+            'nagad' => 'Nagad',
+            'cash'  => __( 'Cash (paid at shop)', 'rar-woo-stock-order' ),
         );
+        $settings = RAR_WSO_Plugin::settings();
+        foreach ( (array) preg_split( '/\r\n|\r|\n/', (string) $settings['payment_extra'] ) as $label ) {
+            $label = trim( sanitize_text_field( $label ) );
+            $slug  = sanitize_key( 'x-' . sanitize_title( $label ) );
+            // Non-English labels (e.g. Bangla) become long %-encoded slugs: use a stable hash instead.
+            $key   = ( strlen( $slug ) > 40 || ! preg_match( '/^[\x20-\x7e]+$/', $label ) ) ? 'x-' . substr( md5( $label ), 0, 12 ) : $slug;
+            if ( '' !== $label && 'x-' !== $key && ! isset( $options[ $key ] ) ) {
+                $options[ $key ] = function_exists( 'mb_substr' ) ? mb_substr( $label, 0, 40 ) : substr( $label, 0, 40 );
+            }
+        }
+        return (array) apply_filters( 'rar_wso_payment_options', $options );
+    }
+
+    /** The four built-in options can be switched off in the settings. */
+    public static function builtin_payment_keys() {
+        return array( 'cod', 'bkash', 'nagad', 'cash' );
+    }
+
+    /**
+     * Options offered in the app: ticked built-in ones plus every extra method (extra
+     * methods typed in the settings or added by the filter are removed by deleting them).
+     * Falls back to all options if nothing would be left.
+     */
+    public static function enabled_payment_options() {
+        $all      = self::payment_options();
+        $settings = RAR_WSO_Plugin::settings();
+        $on       = array_filter( array_map( 'sanitize_key', explode( ',', (string) $settings['payment_methods'] ) ) );
+        $out      = array();
+        foreach ( $all as $key => $label ) {
+            if ( ! in_array( $key, self::builtin_payment_keys(), true ) || in_array( $key, $on, true ) ) {
+                $out[ $key ] = $label;
+            }
+        }
+        return $out ? $out : $all;
+    }
+
+    /** Payment option selected first on a new order. */
+    public static function default_payment() {
+        $enabled  = self::enabled_payment_options();
+        $settings = RAR_WSO_Plugin::settings();
+        $key      = sanitize_key( (string) $settings['payment_default'] );
+        return isset( $enabled[ $key ] ) ? $key : (string) key( $enabled );
     }
 
     public function create_order() {
@@ -1313,10 +1358,10 @@ class RAR_WSO_Ajax {
             (float) apply_filters( 'rar_wso_shipping_total', $shipping, $payload, get_current_user_id() )
         );
 
-        $payments = self::payment_options();
-        $chosen   = sanitize_key( $payload['payment'] ?? 'cod' );
+        $payments = self::enabled_payment_options();
+        $chosen   = sanitize_key( $payload['payment'] ?? '' );
         if ( ! isset( $payments[ $chosen ] ) ) {
-            $chosen = 'cod';
+            $chosen = self::default_payment();
         }
 
         /*

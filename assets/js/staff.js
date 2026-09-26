@@ -212,7 +212,10 @@ const DISTRICTS = (Array.isArray(C.districtList) ? C.districtList : (C.districts
     .sort((a, b) => a.name.localeCompare(b.name));
 const townsFor = district => { const i = bdInfo(district); return i ? i[1].split(',') : []; };
 const isDhaka = district => norm(district) === 'dhaka';
-function shipFor(district) {
+/* Automatic shipping charge; 0 once the items subtotal reaches the "free delivery from" amount. */
+const freeOver = () => Number(C.freeShipOver || 0);
+function shipFor(district, sub) {
+    if (freeOver() > 0 && Number(sub || 0) >= freeOver()) return 0;
     if (!district) return Number(C.shipping || 0);
     const v = isDhaka(district) ? C.shippingDhaka : C.shippingOutside;
     return v === null || v === undefined ? Number(C.shipping || 0) : Number(v);
@@ -760,8 +763,18 @@ function orderView(id) {
 
 const SLIP_FONT = (w, s) => `${w} ${s}px system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans","Noto Sans Bengali",Arial,sans-serif`;
 const ST_INK = { pending:'#8a6300', processing:'#2445b8', 'on-hold':'#6e2ba3', completed:'#17733a', cancelled:'#5b6477', refunded:'#b4173f', failed:'#b42318' };
+/* Shop logo for the slip header: same-origin only (a cross-origin image would block the PNG export). */
+let slipLogo = null;
+const slipLogoReady = (() => {
+    if (!C.logo) return Promise.resolve(null);
+    let same = false;
+    try { same = new URL(C.logo, location.href).origin === location.origin; } catch (_) { same = false; }
+    if (!same) return Promise.resolve(null);
+    return new Promise(res => { const im = new Image(); im.onload = () => { slipLogo = im; res(im); }; im.onerror = () => res(null); im.src = C.logo; });
+})();
+const slipContact = () => [C.slipAddress, C.slipPhone].filter(Boolean).join('  ·  ');
 function slipPaint(x, o, D) {
-    const W = 1080, PAD = 64, R = W - PAD, INK = '#131b31', MUT = '#66718c', INK2 = '#3a4562', NAVY = '#15234a';
+    const W = 1080, PAD = 64, R = W - PAD, INK = '#131b31', MUT = '#66718c', INK2 = '#3a4562', NAVY = /^#[0-9a-f]{6}$/i.test(C.brand || '') ? C.brand : '#15234a';
     const t = (s, X, Y, w, sz, col, al) => { if (!D) return; x.font = SLIP_FONT(w, sz); x.fillStyle = col; x.textAlign = al || 'left'; x.textBaseline = 'alphabetic'; x.fillText(String(s), X, Y); };
     const box = (X, Y, w, h, col, r) => { if (!D) return; x.fillStyle = col; x.beginPath(); if (r && x.roundRect) x.roundRect(X, Y, w, h, r); else x.rect(X, Y, w, h); x.fill(); };
     const hr = Y => { if (D) { x.fillStyle = '#e0e5ee'; x.fillRect(PAD, Y, W - 2 * PAD, 2); } };
@@ -773,8 +786,17 @@ function slipPaint(x, o, D) {
     const fit = (s, w, sz, maxW) => { x.font = SLIP_FONT(w, sz); let str = String(s); while (str.length > 3 && x.measureText(str).width > maxW) str = str.slice(0, -2); return str === String(s) ? str : str + '…'; };
     let y;
     box(0, 0, W, 196, NAVY);
-    t(fit(String(C.business || 'Sales Order').toUpperCase(), 800, 50, 600), PAD, 98, 800, 50, '#ffffff');
-    t(fit(C.site || '', 500, 24, 600), PAD, 146, 500, 24, 'rgba(255,255,255,.72)');
+    let LX = PAD;
+    if (slipLogo && D) {
+        box(PAD, 44, 108, 108, '#ffffff', 22);
+        try {
+            const s = Math.min(92 / slipLogo.naturalWidth, 92 / slipLogo.naturalHeight), w = slipLogo.naturalWidth * s, h = slipLogo.naturalHeight * s;
+            x.drawImage(slipLogo, PAD + (108 - w) / 2, 44 + (108 - h) / 2, w, h);
+        } catch (_) { /* image not drawable: keep the white tile */ }
+    }
+    if (slipLogo) LX = PAD + 132;
+    t(fit(String(C.business || 'Sales Order').toUpperCase(), 800, 50, 600 - (LX - PAD)), LX, 98, 800, 50, '#ffffff');
+    t(fit(slipContact() || C.site || '', 500, 24, 600 - (LX - PAD)), LX, 146, 500, 24, 'rgba(255,255,255,.78)');
     t('SALES ORDER', R, 94, 800, 32, '#ffffff', 'right');
     t('#' + o.number, R, 146, 800, 42, '#a9bdff', 'right');
     y = 196;
@@ -832,6 +854,7 @@ const slipCache = new Map();
 async function makeSlip(o) {
     const key = o.id + '|' + o.status;
     if (slipCache.has(key)) return slipCache.get(key);
+    await slipLogoReady;
     const c = document.createElement('canvas'), x = c.getContext('2d');
     c.width = 1080; c.height = 10;
     const h = slipPaint(x, o, false);
@@ -839,7 +862,17 @@ async function makeSlip(o) {
     x.fillStyle = '#ffffff'; x.fillRect(0, 0, c.width, c.height);
     slipPaint(x, o, true);
     const blob = await new Promise(res => { try { c.toBlob(res, 'image/png'); } catch (e) { res(null); } });
-    const rec = { blob, url:blob ? URL.createObjectURL(blob) : c.toDataURL('image/png') };
+    let url = '';
+    if (blob) url = URL.createObjectURL(blob);
+    else {
+        try { url = c.toDataURL('image/png'); }
+        catch (e) {
+            // The logo made the canvas unreadable (cross-origin redirect): draw the slip without it.
+            if (slipLogo) { slipLogo = null; slipCache.delete(key); return makeSlip(o); }
+            throw e;
+        }
+    }
+    const rec = { blob, url };
     slipCache.set(key, rec);
     return rec;
 }
@@ -853,6 +886,7 @@ function orderText(o) {
     if (o.tax) L.push(`Tax: ${money(o.tax)}`);
     L.push(`*Total: ${money(o.total)}*`, `(${inWords(o.total)})`, '', `Payment: ${o.payment || '—'} · Status: ${stLabel(o.status)}`);
     if (C.slipFooter) L.push(C.slipFooter);
+    if (slipContact()) L.push(slipContact());
     return L.join('\n');
 }
 const waLink = o => `https://wa.me/88${String(o.phone || '').replace(/\D/g, '').replace(/^88/, '')}?text=${encodeURIComponent(orderText(o))}`;
@@ -911,7 +945,7 @@ function slipView(o) {
 /* ================================================================
    Stock views
    ================================================================ */
-const REASONS = ['Restock — new shipment', 'Count correction', 'Damaged / expired', 'Customer return', 'Transfer in', 'Transfer out'];
+const REASONS = (Array.isArray(C.stockReasons) && C.stockReasons.length) ? C.stockReasons.map(String) : ['Restock — new shipment', 'Count correction', 'Damaged / expired', 'Customer return', 'Transfer in', 'Transfer out'];
 function stockView(mode, preset) {
     const T = { all:['All Stock', '--c-allstock', 'boxes'], live:['Available / Live Stock', '--c-live', 'pulse'], out:['Out of Stock', '--c-out', 'ban'], manager:['Stock Manager', '--c-allstock', 'sliders'] }[mode];
     const v = { mode, title:T[0], hue:T[1], icon:T[2], staged:new Map(), origin:new Map(), q:'', chip:preset || 'all', cat:0, sort:'qty_asc', tab:'list', reason:REASONS[0],
@@ -1140,7 +1174,9 @@ function phoneErr(d) {
 const newReqId = () => (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'req-' + Date.now() + '-' + Math.random().toString(16).slice(2);
 const shortProduct = p => esc(p.name);
 function createView() {
-    const blank = () => ({ name:'', phone:'', email:'', address:'', district:'', city:'', pay:'cod', discType:'amount', discount:'', ship:String(shipFor('')), shipAuto:true, note:'', items:[] });
+    const PAYS = C.payments || { cod:'Cash on delivery' };
+    const payDefault = () => (C.payDefault && PAYS[C.payDefault]) ? C.payDefault : (Object.keys(PAYS)[0] || 'cod');
+    const blank = () => ({ name:'', phone:'', email:'', address:'', district:'', city:'', pay:payDefault(), discType:'amount', discount:'', ship:String(shipFor('', 0)), shipAuto:true, note:'', items:[] });
     const v = { title:'Create Order', hue:'--c-sales', icon:'plus', f:blank(), touched:{}, tried:false, done:null, saving:false, reqId:'', serverError:'', opened:Date.now(),
         cb:{ district:{ q:'', open:false, active:-1, list:[] }, city:{ q:'', open:false, active:-1, list:[] } },
         pk:{ open:false, q:'', items:[], page:1, pages:1, loading:false, req:0 }, customer:null, lookupReq:0 };
@@ -1156,6 +1192,7 @@ function createView() {
     v.onDiscard = draftClear;
     const saved = draftLoad();
     if (saved && (saved.f.name || saved.f.phone || (saved.f.items || []).length)) { v.f = Object.assign(blank(), saved.f); v.restored = saved.at; v.reqId = saved.reqId || ''; }
+    if (!PAYS[v.f.pay]) v.f.pay = payDefault(); // a payment method switched off since the draft was saved
     /* The request ID is kept until the order is saved or discarded: if a save timed out but reached
        the server, pressing Save again (even after edits or an app restart) returns that same order. */
     const changed = () => { v.serverError = ''; draftSave(); };
@@ -1192,10 +1229,13 @@ function createView() {
         return { sub, d, ship, tot:Math.max(0, sub - d + ship), units:sum(f.items, i => i.qty), list, cut, cutPct:list > 0 ? cut / list * 100 : 0, lowered:f.items.some(i => i.price < Number(i.list ?? i.price) - 0.0001) };
     };
     const updateTotals = () => {
+        // Automatic shipping follows the district and the free-delivery amount as items change.
+        if (v.f.shipAuto) { const auto = String(shipFor(v.f.district, calc().sub)); if (auto !== v.f.ship) { v.f.ship = auto; const s = $b('#coShip'); if (s) s.value = auto; } }
         const c = calc(), set = (s, txt) => { const n = $b(s); if (n) n.textContent = txt; };
         set('#tSub', money(c.sub)); set('#tDisc', (c.d ? '−' : '') + money(c.d)); set('#tShip', money(c.ship)); set('#tTot', money(c.tot)); set('#tWords', inWords(c.tot));
         const h = $b('#shipHint');
-        if (h) h.innerHTML = v.f.shipAuto ? (v.f.district ? `Auto: ${shipLabel(v.f.district)} ${esc(money(shipFor(v.f.district)))} — প্রয়োজনে বদলাতে পারবেন` : 'District দিলে shipping নিজে বসবে') : `Manual shipping <button type="button" data-act="ship-auto">Auto-তে ফেরত নিন</button>`;
+        const free = freeOver() > 0 && c.sub >= freeOver();
+        if (h) h.innerHTML = v.f.shipAuto ? (free ? `Free delivery — items ${esc(money(freeOver()))}+ · প্রয়োজনে charge বসাতে পারবেন` : (v.f.district ? `Auto: ${shipLabel(v.f.district)} ${esc(money(shipFor(v.f.district, c.sub)))} — প্রয়োজনে বদলাতে পারবেন` : 'District দিলে shipping নিজে বসবে')) : `Manual shipping <button type="button" data-act="ship-auto">Auto-তে ফেরত নিন</button>`;
         const tt = E.foot.querySelector('#coTotal'); if (tt) tt.textContent = money(c.tot);
         const n = E.foot.querySelector('#coCount'); if (n) n.textContent = c.units ? `${qtyFmt(c.units)} unit${c.units > 1 ? 's' : ''} · ${v.f.items.length} item${v.f.items.length > 1 ? 's' : ''}` : 'No items yet';
     };
@@ -1239,7 +1279,7 @@ function createView() {
         const ci = $b('#coCity'), towns = townsFor(v.f.district);
         if (v.f.city && towns.length && !towns.includes(v.f.city) && !v.f.cityCustom) { v.f.city = ''; v.cb.city.q = ''; if (ci) ci.value = ''; }
         if (ci) { ci.disabled = !v.f.district; ci.placeholder = v.f.district ? `Search in ${v.f.district}…` : 'আগে District select করুন'; }
-        if (v.f.shipAuto) { v.f.ship = String(shipFor(v.f.district)); const s = $b('#coShip'); if (s) s.value = v.f.ship; }
+        if (v.f.shipAuto) { v.f.ship = String(shipFor(v.f.district, calc().sub)); const s = $b('#coShip'); if (s) s.value = v.f.ship; }
         updateTotals();
     };
     const pickCombo = (k, val, fromCommit) => {
@@ -1465,7 +1505,7 @@ function createView() {
         if (act === 'pk-done') { v.pk.open = false; pkDraw(); }
         else if (act === 'pk-more') { v.pk.page++; pkFetch(false); }
         else if (act === 'dt') { v.f.discType = a.dataset.dt; E.body.querySelectorAll('[data-act="dt"]').forEach(x => x.setAttribute('aria-pressed', String(x === a))); changed(); updateTotals(); }
-        else if (act === 'ship-auto') { v.f.shipAuto = true; v.f.ship = String(shipFor(v.f.district)); const s = $b('#coShip'); if (s) s.value = v.f.ship; changed(); updateTotals(); }
+        else if (act === 'ship-auto') { v.f.shipAuto = true; v.f.ship = String(shipFor(v.f.district, calc().sub)); const s = $b('#coShip'); if (s) s.value = v.f.ship; changed(); updateTotals(); }
         else if (act === 'iinc') { if (it.max !== null && !it.backorders && it.qty >= it.max) { toast(`Stock-এ আছে মাত্র ${toBn(it.max)}টি`); return; } it.qty++; changed(); renderItems(); pkDraw(); updateTotals(); if (v.tried) show('items'); }
         else if (act === 'idec') { it.qty = Math.max(1, it.qty - 1); changed(); renderItems(); pkDraw(); updateTotals(); if (v.tried) show('items'); }
         else if (act === 'irm') { v.f.items = v.f.items.filter(i => i !== it); changed(); renderItems(); pkDraw(); updateTotals(); if (v.tried) show('items'); }
@@ -1473,7 +1513,7 @@ function createView() {
             const c = v.customer, dist = DISTRICTS.find(d => norm(d.name) === norm(c.district));
             Object.assign(v.f, { name:c.name || v.f.name, email:c.email || v.f.email, address:c.address || v.f.address, district:dist ? dist.name : v.f.district, city:c.city || v.f.city });
             v.f.cityCustom = !townsFor(v.f.district).includes(v.f.city);
-            if (v.f.shipAuto) v.f.ship = String(shipFor(v.f.district));
+            if (v.f.shipAuto) v.f.ship = String(shipFor(v.f.district, calc().sub));
             ['name', 'email', 'address', 'district', 'city'].forEach(k2 => { v.touched[k2] = true; });
             changed(); drawBody(false); toast('আগের order থেকে তথ্য বসানো হয়েছে — মিলিয়ে নিন');
         }

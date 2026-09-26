@@ -16,8 +16,12 @@ final class RAR_WSO_Plugin {
     private function __construct() {
         require_once RAR_WSO_PATH . 'includes/class-rar-wso-lock.php';
         require_once RAR_WSO_PATH . 'includes/class-rar-wso-security.php';
+        require_once RAR_WSO_PATH . 'includes/class-rar-wso-audit.php';
         require_once RAR_WSO_PATH . 'includes/class-rar-wso-log.php';
         require_once RAR_WSO_PATH . 'includes/class-rar-wso-reports.php';
+        require_once RAR_WSO_PATH . 'includes/class-rar-wso-health.php';
+        require_once RAR_WSO_PATH . 'includes/class-rar-wso-digest.php';
+        require_once RAR_WSO_PATH . 'includes/class-rar-wso-integrations.php';
         require_once RAR_WSO_PATH . 'includes/class-rar-wso-admin.php';
         require_once RAR_WSO_PATH . 'includes/class-rar-wso-ajax.php';
         require_once RAR_WSO_PATH . 'includes/class-rar-wso-pwa.php';
@@ -28,6 +32,8 @@ final class RAR_WSO_Plugin {
         RAR_WSO_Log::hooks();
         RAR_WSO_Reports::hooks();
         RAR_WSO_Security::hooks();
+        RAR_WSO_Digest::hooks();
+        RAR_WSO_Integrations::hooks();
 
         add_action( 'init', array( $this, 'maybe_upgrade' ), 5 );
         add_filter( 'plugin_action_links_' . plugin_basename( RAR_WSO_FILE ), array( $this, 'plugin_action_links' ) );
@@ -55,7 +61,97 @@ final class RAR_WSO_Plugin {
             'slip_footer'          => 'Thank you for shopping with us!',
             'dashboard_title'      => 'Woo Stock & Order',
             'managers_add_staff'   => 'no',
+            // v1.4.0 — branding.
+            'brand_color'          => '#15234a',
+            'logo_id'              => '0',
+            'slip_phone'           => '',
+            'slip_address'         => '',
+            // v1.4.0 — orders & stock.
+            'payment_methods'      => 'cod,bkash,nagad,cash',
+            'payment_extra'        => '',
+            'payment_default'      => 'cod',
+            'free_shipping_over'   => '0',
+            'stock_reasons'        => "Restock — new shipment\nCount correction\nDamaged / expired\nCustomer return\nTransfer in\nTransfer out",
+            // v1.4.0 — access & security.
+            'login_user_limit'     => '6',
+            'login_ip_limit'       => '10',
+            'lockout_minutes'      => '15',
+            'session_days'         => '14',
+            // v1.4.0 — reports & integrations.
+            'digest_enabled'       => 'no',
+            'digest_email'         => '',
+            'digest_hour'          => '21',
+            'log_retention_days'   => '0',
+            'admin_bar_link'       => 'yes',
+            'dashboard_widget'     => 'yes',
+            'order_column'         => 'yes',
         );
+    }
+
+    /**
+     * Menu badge: stock below zero + orders waiting over 24h. Read from one small autoloaded
+     * option that is refreshed whenever those figures are recalculated (never recalculates here).
+     */
+    public static function attention_count() {
+        $a = get_option( 'rar_wso_attention', array() );
+        // Figures older than an hour are not shown (they refresh when a dashboard is opened).
+        if ( ! is_array( $a ) || time() - (int) ( $a['at'] ?? 0 ) > HOUR_IN_SECONDS ) {
+            return 0;
+        }
+        return (int) ( $a['negative'] ?? 0 ) + (int) ( $a['stale'] ?? 0 );
+    }
+
+    /** Stores one badge figure; writes only when it changed. */
+    public static function set_attention( $key, $value ) {
+        $a = get_option( 'rar_wso_attention', array() );
+        $a = is_array( $a ) ? $a : array();
+        // Write when the figure changed, or at most every 10 minutes to keep it fresh.
+        if ( (int) ( $a[ $key ] ?? -1 ) !== (int) $value || time() - (int) ( $a['at'] ?? 0 ) > 10 * MINUTE_IN_SECONDS ) {
+            $a[ $key ] = (int) $value;
+            $a['at']   = time();
+            update_option( 'rar_wso_attention', $a, true );
+        }
+    }
+
+    /** Brand colour as a safe #rrggbb value. */
+    public static function brand_color() {
+        $settings = self::settings();
+        $color    = sanitize_hex_color( (string) $settings['brand_color'] );
+        return $color && 7 === strlen( $color ) ? strtolower( $color ) : '#15234a';
+    }
+
+    /** Logo image URL (Media Library), or '' when none is set. */
+    public static function logo_url( $size = 'medium' ) {
+        $settings = self::settings();
+        $id       = absint( $settings['logo_id'] );
+        if ( ! $id ) {
+            return '';
+        }
+        $url = wp_get_attachment_image_url( $id, $size );
+        return $url ? (string) $url : '';
+    }
+
+    /** Preset reasons for stock changes, one per line in the settings. */
+    public static function stock_reasons() {
+        $settings = self::settings();
+        $lines    = preg_split( '/\r\n|\r|\n/', (string) $settings['stock_reasons'] );
+        $out      = array();
+        foreach ( (array) $lines as $line ) {
+            $line = trim( sanitize_text_field( $line ) );
+            if ( '' !== $line && ! in_array( $line, $out, true ) ) {
+                $out[] = function_exists( 'mb_substr' ) ? mb_substr( $line, 0, 60 ) : substr( $line, 0, 60 );
+            }
+        }
+        return array_slice( $out, 0, 20 );
+    }
+
+    /**
+     * Staff accounts only (never Shop Managers / Administrators): per-person settings
+     * saved from WooCommerce → Stock & Order → Staff.
+     */
+    public static function staff_override( $key, $user_id = 0 ) {
+        $user_id = $user_id ? $user_id : get_current_user_id();
+        return $user_id ? (string) get_user_meta( $user_id, 'rar_wso_' . $key, true ) : '';
     }
 
     public static function settings() {
@@ -90,19 +186,28 @@ final class RAR_WSO_Plugin {
         } else {
             update_option( 'rar_wso_settings', self::settings() );
         }
+        require_once RAR_WSO_PATH . 'includes/class-rar-wso-security.php';
+        require_once RAR_WSO_PATH . 'includes/class-rar-wso-audit.php';
         require_once RAR_WSO_PATH . 'includes/class-rar-wso-log.php';
         RAR_WSO_Log::install();
+        add_option( 'rar_wso_attention', array(), '', true );
         update_option( 'rar_wso_version', RAR_WSO_VERSION, true );
         update_option( 'rar_wso_flush_rewrite', 1, true );
     }
 
     public static function deactivate() {
+        wp_clear_scheduled_hook( 'rar_wso_daily_digest' );
+        wp_clear_scheduled_hook( 'rar_wso_housekeeping' );
         flush_rewrite_rules();
     }
 
     public function maybe_upgrade() {
         $installed = (string) get_option( 'rar_wso_version', '0' );
         if ( version_compare( $installed, RAR_WSO_VERSION, '>=' ) ) {
+            return;
+        }
+        // One request upgrades; others arriving at the same moment carry on without waiting.
+        if ( ! RAR_WSO_Lock::acquire( 'upgrade', 0 ) ) {
             return;
         }
 
@@ -125,6 +230,9 @@ final class RAR_WSO_Plugin {
         // Locks are MySQL named locks since 1.3.0; remove leftovers of the old option-row locks.
         global $wpdb;
         $wpdb->query( "DELETE FROM {$wpdb->options} WHERE option_name LIKE 'rar\\_wso\\_lock\\_%'" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        // Menu badge figures live in one small autoloaded option (no query per admin page).
+        add_option( 'rar_wso_attention', array(), '', true );
+        RAR_WSO_Digest::reschedule();
     }
 
     public static function register_roles_and_caps() {
@@ -192,6 +300,11 @@ final class RAR_WSO_Plugin {
         if ( self::is_manager() ) {
             return 100.0;
         }
+        // A personal limit set for this staff member wins over the shop-wide one.
+        $own = self::staff_override( 'max_discount' );
+        if ( '' !== $own && is_numeric( $own ) ) {
+            return (float) min( 100, max( 0, (float) $own ) );
+        }
         $settings = self::settings();
         return (float) min( 100, max( 0, (float) $settings['staff_max_discount'] ) );
     }
@@ -200,7 +313,14 @@ final class RAR_WSO_Plugin {
         if ( self::is_manager() ) {
             return true;
         }
+        if ( ! self::can( 'rar_wso_access' ) ) {
+            return false;
+        }
+        $own = self::staff_override( 'view_orders' );
+        if ( 'yes' === $own || 'no' === $own ) {
+            return 'yes' === $own;
+        }
         $settings = self::settings();
-        return 'yes' === $settings['staff_view_orders'] && self::can( 'rar_wso_access' );
+        return 'yes' === $settings['staff_view_orders'];
     }
 }

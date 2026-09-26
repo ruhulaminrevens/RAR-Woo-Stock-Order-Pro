@@ -7,7 +7,7 @@ if ( ! defined( 'ABSPATH' ) ) {
  * Stock movement history: manual staff updates plus WooCommerce order reductions/restocks.
  */
 class RAR_WSO_Log {
-    const DB_VERSION = '1';
+    const DB_VERSION = '2';
 
     public static function table() {
         global $wpdb;
@@ -17,7 +17,7 @@ class RAR_WSO_Log {
     public static function install() {
         global $wpdb;
 
-        if ( get_option( 'rar_wso_log_db' ) === self::DB_VERSION && self::table_exists() ) {
+        if ( get_option( 'rar_wso_log_db' ) === self::DB_VERSION && self::table_exists() && self::table_exists( RAR_WSO_Audit::table() ) ) {
             return;
         }
 
@@ -26,7 +26,8 @@ class RAR_WSO_Log {
         $collate = $wpdb->get_charset_collate();
 
         dbDelta(
-            "CREATE TABLE {$table} (
+            array(
+                "CREATE TABLE {$table} (
                 id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
                 product_id bigint(20) unsigned NOT NULL DEFAULT 0,
                 user_id bigint(20) unsigned NOT NULL DEFAULT 0,
@@ -38,16 +39,20 @@ class RAR_WSO_Log {
                 created_gmt datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
                 PRIMARY KEY  (id),
                 KEY product_id (product_id),
-                KEY created_gmt (created_gmt)
-            ) {$collate};"
+                KEY created_gmt (created_gmt),
+                KEY user_id (user_id)
+            ) {$collate};",
+                // Admin & security audit trail (v1.4.0).
+                RAR_WSO_Audit::schema( $collate ),
+            )
         );
 
         update_option( 'rar_wso_log_db', self::DB_VERSION, false );
     }
 
-    private static function table_exists() {
+    public static function table_exists( $table = null ) {
         global $wpdb;
-        $table = self::table();
+        $table = $table ? $table : self::table();
         return $table === $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $table ) ) );
     }
 
@@ -115,7 +120,7 @@ class RAR_WSO_Log {
 
         $table    = self::table();
         $page     = max( 1, absint( $args['page'] ?? 1 ) );
-        $per_page = min( 100, max( 1, absint( $args['per_page'] ?? 40 ) ) );
+        $per_page = min( 1000, max( 1, absint( $args['per_page'] ?? 40 ) ) );
         $where    = array( '1=1' );
         $params   = array();
 
@@ -123,12 +128,32 @@ class RAR_WSO_Log {
             $where[]  = 'l.product_id = %d';
             $params[] = absint( $args['product_id'] );
         }
+        if ( ! empty( $args['product_ids'] ) ) {
+            $ids     = array_filter( array_map( 'absint', (array) $args['product_ids'] ) );
+            $where[] = $ids ? 'l.product_id IN (' . implode( ',', $ids ) . ')' : '1=0';
+        }
         if ( ! empty( $args['search'] ) ) {
             $like     = '%' . $wpdb->esc_like( $args['search'] ) . '%';
             $where[]  = '(p.post_title LIKE %s OR l.reason LIKE %s OR lk.sku LIKE %s)';
             $params[] = $like;
             $params[] = $like;
             $params[] = $like;
+        }
+        if ( ! empty( $args['user_id'] ) ) {
+            $where[]  = 'l.user_id = %d';
+            $params[] = absint( $args['user_id'] );
+        }
+        if ( ! empty( $args['source'] ) && in_array( $args['source'], array( 'staff', 'order' ), true ) ) {
+            $where[]  = 'l.source = %s';
+            $params[] = $args['source'];
+        }
+        if ( ! empty( $args['from'] ) ) {
+            $where[]  = 'l.created_gmt >= %s';
+            $params[] = (string) $args['from'];
+        }
+        if ( ! empty( $args['to'] ) ) {
+            $where[]  = 'l.created_gmt <= %s';
+            $params[] = (string) $args['to'];
         }
 
         $where_sql = implode( ' AND ', $where );
@@ -159,6 +184,7 @@ class RAR_WSO_Log {
                 'reason'   => $row['reason'],
                 'source'   => $row['source'],
                 'order_id' => (int) $row['order_id'],
+                'product_id' => (int) $row['product_id'],
                 'user'     => $uid ? $users[ $uid ] : ( 'order' === $row['source'] ? 'WooCommerce' : '' ),
                 'time'     => strtotime( $row['created_gmt'] . ' UTC' ),
             );
@@ -189,5 +215,26 @@ class RAR_WSO_Log {
         global $wpdb;
         $table = self::table();
         return (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE created_gmt >= %s", $gmt ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+    }
+
+    /** Deletes stock history older than $days days (0 = keep everything). Returns rows removed. */
+    public static function prune( $days ) {
+        global $wpdb;
+        $days = absint( $days );
+        if ( ! $days ) {
+            return 0;
+        }
+        $cut = gmdate( 'Y-m-d H:i:s', time() - $days * DAY_IN_SECONDS );
+        return (int) $wpdb->query( $wpdb->prepare( 'DELETE FROM ' . self::table() . ' WHERE created_gmt < %s', $cut ) ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+    }
+
+    /** Oldest entry time (unix) and row count, for the Tools screen. */
+    public static function stats() {
+        global $wpdb;
+        $row = $wpdb->get_row( 'SELECT COUNT(*) AS n, MIN(created_gmt) AS oldest FROM ' . self::table(), ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+        return array(
+            'rows'   => (int) ( $row['n'] ?? 0 ),
+            'oldest' => ! empty( $row['oldest'] ) ? strtotime( $row['oldest'] . ' UTC' ) : 0,
+        );
     }
 }

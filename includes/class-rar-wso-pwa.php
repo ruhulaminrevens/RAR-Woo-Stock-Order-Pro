@@ -211,7 +211,7 @@ class RAR_WSO_PWA {
         ?>
 <meta charset="<?php bloginfo( 'charset' ); ?>">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#15234a">
+<meta name="theme-color" content="<?php echo esc_attr( RAR_WSO_Plugin::brand_color() ); ?>">
 <meta name="robots" content="noindex,nofollow,noarchive">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -223,7 +223,21 @@ class RAR_WSO_PWA {
 <link rel="icon" type="image/png" sizes="192x192" href="<?php echo esc_url( self::icon_url( 'icon-192.png' ) ); ?>">
 <link rel="apple-touch-icon" href="<?php echo esc_url( self::icon_url( 'apple-touch-icon.png' ) ); ?>">
 <link rel="stylesheet" data-no-optimize="1" data-no-minify="1" data-noptimize="1" href="<?php echo esc_url( RAR_WSO_URL . 'assets/css/staff.css?ver=' . rawurlencode( RAR_WSO_VERSION ) ); ?>">
+<?php if ( '#15234a' !== RAR_WSO_Plugin::brand_color() ) : ?>
+<style>:root{--top:<?php echo esc_html( RAR_WSO_Plugin::brand_color() ); ?>}.mark{color:<?php echo esc_html( RAR_WSO_Plugin::brand_color() ); ?>}</style>
+<?php endif; ?>
         <?php
+    }
+
+    /** Header mark: the shop logo if one is set, otherwise the first letter of the business name. */
+    private static function mark_html() {
+        $logo = RAR_WSO_Plugin::logo_url( 'thumbnail' );
+        if ( $logo ) {
+            return '<img src="' . esc_url( $logo ) . '" alt="">';
+        }
+        $name = RAR_WSO_Plugin::business_name();
+        $char = function_exists( 'mb_substr' ) ? mb_substr( $name, 0, 1 ) : substr( $name, 0, 1 );
+        return esc_html( function_exists( 'mb_strtoupper' ) ? mb_strtoupper( $char ) : strtoupper( $char ) );
     }
 
     private static function short_name() {
@@ -266,7 +280,7 @@ class RAR_WSO_PWA {
                 'display_override' => array( 'standalone', 'minimal-ui' ),
                 'orientation'      => 'portrait',
                 'background_color' => '#f5f7f8',
-                'theme_color'      => '#15234a',
+                'theme_color'      => RAR_WSO_Plugin::brand_color(),
                 'categories'       => array( 'business', 'productivity' ),
                 'icons'            => array(
                     array( 'src' => self::icon_url( 'icon-192.png' ), 'sizes' => '192x192', 'type' => 'image/png', 'purpose' => 'any' ),
@@ -440,7 +454,14 @@ self.addEventListener('fetch', e => {
             'changeStatuses'   => array_keys( RAR_WSO_Ajax::changeable_statuses() ),
             'maxDiscount'      => RAR_WSO_Plugin::max_discount_percent(),
             'liveStatuses'     => RAR_WSO_Ajax::live_statuses(),
-            'payments'         => RAR_WSO_Ajax::payment_options(),
+            'payments'         => RAR_WSO_Ajax::enabled_payment_options(),
+            'payDefault'       => RAR_WSO_Ajax::default_payment(),
+            'stockReasons'     => RAR_WSO_Plugin::stock_reasons(),
+            'freeShipOver'     => (float) $settings['free_shipping_over'],
+            'brand'            => RAR_WSO_Plugin::brand_color(),
+            'logo'             => RAR_WSO_Plugin::logo_url( 'medium' ),
+            'slipPhone'        => (string) $settings['slip_phone'],
+            'slipAddress'      => (string) $settings['slip_address'],
             'timezone'         => wp_timezone_string(),
             'tzOffset'         => (int) $tz->getOffset( new DateTime( 'now', $tz ) ),
             'business'         => RAR_WSO_Plugin::business_name(),
@@ -468,7 +489,7 @@ self.addEventListener('fetch', e => {
 <header class="topbar">
     <div class="wrap tb-in">
         <div class="brand">
-            <span class="mark" aria-hidden="true"><?php $rar_initial = function_exists( 'mb_substr' ) ? mb_substr( RAR_WSO_Plugin::business_name(), 0, 1 ) : substr( RAR_WSO_Plugin::business_name(), 0, 1 ); echo esc_html( function_exists( 'mb_strtoupper' ) ? mb_strtoupper( $rar_initial ) : strtoupper( $rar_initial ) ); ?></span>
+            <span class="mark" aria-hidden="true"><?php echo self::mark_html(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in mark_html() ?></span>
             <div><b><?php echo esc_html( $settings['dashboard_title'] ); ?></b><small><?php echo esc_html( $user->display_name ); ?> · <?php echo $manager ? esc_html__( 'Shop Manager', 'rar-woo-stock-order' ) : esc_html__( 'Staff', 'rar-woo-stock-order' ); ?></small></div>
         </div>
         <a class="tb-out" href="<?php echo esc_url( self::logout_url() ); ?>"><?php esc_html_e( 'Log out', 'rar-woo-stock-order' ); ?></a>
@@ -583,7 +604,9 @@ self.addEventListener('fetch', e => {
 </head>
 <body class="rar-login-page">
 <div class="rar-login-card">
-    <div class="rar-kicker">RAR WOO</div>
+    <?php $rar_logo = RAR_WSO_Plugin::logo_url( 'thumbnail' ); ?>
+    <?php if ( $rar_logo ) : ?><img class="rar-login-logo" src="<?php echo esc_url( $rar_logo ); ?>" alt="" width="56" height="56"><?php endif; ?>
+    <div class="rar-kicker"><?php echo esc_html( function_exists( 'mb_strtoupper' ) ? mb_strtoupper( RAR_WSO_Plugin::business_name() ) : strtoupper( RAR_WSO_Plugin::business_name() ) ); ?></div>
     <h1><?php echo esc_html( $settings['dashboard_title'] ); ?></h1>
     <p>Staff login</p>
     <?php if ( '' !== $error ) : ?>

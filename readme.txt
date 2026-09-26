@@ -5,7 +5,7 @@ Requires at least: 6.3
 Tested up to: 7.1
 Requires PHP: 7.4
 Requires Plugins: woocommerce
-Stable tag: 1.3.0
+Stable tag: 1.4.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -39,12 +39,15 @@ Features:
 1. Download the official installable ZIP from the GitHub Release page.
 2. Upload it in WordPress > Plugins > Add New > Upload Plugin.
 3. Activate RAR Woo Stock & Order.
-4. Open WooCommerce > Stock & Order.
-5. Configure the staff app, default order status, price override and default shipping.
-6. Assign staff users the role "Woo Stock & Order Staff".
+4. Open WooCommerce > Stock & Order (the Control Center) and check Security & Health.
+5. Review Settings: discount limit, shipping, payments, branding, daily email.
+6. Add staff in the Staff tab (never by public sign-up) and print the QR poster.
 7. Open /staff/ on the phone. Android Chrome: tap "Install app". iPhone Safari: Share > Add to Home Screen.
 
 == Upgrade Notice ==
+
+= 1.4.0 =
+New admin Control Center (Overview, Staff, Activity, Settings, Security & Health, Tools, Help). Take a backup first. After updating, open WooCommerce > Stock & Order > Security & Health and review the new Settings sections.
 
 = 1.3.0 =
 Concurrency, security and staff-account release. Take a backup first. After updating, review WooCommerce > Stock & Order: the Staff discount limit now also covers lower item rates, and staff accounts can be added and paused there.
@@ -62,6 +65,15 @@ Take a backup, then upload the v1.2.0 ZIP and choose "Replace current with uploa
 If v1.0.0 was installed directly from a GitHub source archive and uses a versioned plugin folder, deactivate/delete the old plugin files first, then install the official v1.1.0 release ZIP. Settings and WooCommerce operational data are preserved.
 
 == Changelog ==
+
+= 1.4.0 =
+* New Control Center: live KPI overview with 14-day chart, team leaderboard, stock watch, health score and activity timeline.
+* Staff tab: mobile-friendly list, per-person discount limit, branch, order-list access and blocking of stock / orders / rate changes; pause, sign out, password links.
+* Activity: stock movements, staff orders and a new admin & security audit log, with filters and CSV export.
+* Settings: brand colour and logo, slip contact, payment methods and extras, free delivery, stock reasons, login limits, staff session length, daily summary email, history retention.
+* Security & Health: 20+ checks, login stats, emergency sign-out / pause / app switch.
+* Tools: stock valuation CSV (with COGS cost), exports, maintenance, settings backup / import / reset, system report.
+* Admin bar menu, Dashboard widget, Staff column on orders, order and product side boxes, printable QR poster.
 
 = 1.3.0 =
 * No overselling between staff: per-product stock locks with fresh database reads (load test: 50 units → exactly 50 orders).

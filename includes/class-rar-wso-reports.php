@@ -377,6 +377,7 @@ class RAR_WSO_Reports {
         $out['processing_value'] = (float) ( $out['by_status']['processing']['total'] ?? 0 );
 
         self::cache_set( 'overview', $out, 30 );
+        RAR_WSO_Plugin::set_attention( 'stale', $out['stale'] );
         return $out;
     }
 
@@ -442,5 +443,200 @@ class RAR_WSO_Reports {
         $list = array_values( $map );
         usort( $list, static function ( $a, $b ) { return $b['sales'] <=> $a['sales']; } );
         return array_slice( $list, 0, $limit );
+    }
+
+    /* --------------------------------------------------------------------
+     * Admin Control Center (v1.4.0)
+     * ------------------------------------------------------------------ */
+
+    private static function order_meta_table() {
+        global $wpdb;
+        if ( method_exists( '\Automattic\WooCommerce\Utilities\OrderUtil', 'get_table_for_order_meta' ) ) {
+            return \Automattic\WooCommerce\Utilities\OrderUtil::get_table_for_order_meta();
+        }
+        return $wpdb->prefix . 'wc_orders_meta';
+    }
+
+    /**
+     * Orders in a window with the staff member who created them (0 = website / wp-admin).
+     *
+     * @return array<int, array{id:int,status:string,total:float,time:int,creator:int,discount:float}>
+     */
+    public static function creator_rows( DateTimeInterface $from, DateTimeInterface $to ) {
+        global $wpdb;
+        $a = self::gmt( $from );
+        $b = self::gmt( $to );
+        if ( self::hpos() ) {
+            $orders = \Automattic\WooCommerce\Utilities\OrderUtil::get_table_for_orders();
+            $meta   = self::order_meta_table();
+            $sql    = "SELECT o.id, o.status, o.total_amount AS total, o.date_created_gmt AS created, mc.meta_value AS creator, md.meta_value AS discount
+                FROM {$orders} o
+                LEFT JOIN {$meta} mc ON mc.order_id = o.id AND mc.meta_key = '_rar_wso_created_by'
+                LEFT JOIN {$meta} md ON md.order_id = o.id AND md.meta_key = '_rar_wso_discount'
+                WHERE o.type = 'shop_order' AND o.status NOT IN ('trash','auto-draft','wc-checkout-draft') AND o.date_created_gmt >= %s AND o.date_created_gmt <= %s";
+        } else {
+            $sql = "SELECT p.ID AS id, p.post_status AS status, mt.meta_value AS total, p.post_date_gmt AS created, mc.meta_value AS creator, md.meta_value AS discount
+                FROM {$wpdb->posts} p
+                LEFT JOIN {$wpdb->postmeta} mt ON mt.post_id = p.ID AND mt.meta_key = '_order_total'
+                LEFT JOIN {$wpdb->postmeta} mc ON mc.post_id = p.ID AND mc.meta_key = '_rar_wso_created_by'
+                LEFT JOIN {$wpdb->postmeta} md ON md.post_id = p.ID AND md.meta_key = '_rar_wso_discount'
+                WHERE p.post_type = 'shop_order' AND p.post_status NOT IN ('trash','auto-draft','wc-checkout-draft') AND p.post_date_gmt >= %s AND p.post_date_gmt <= %s";
+        }
+        $raw     = $wpdb->get_results( $wpdb->prepare( $sql, $a, $b ), ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+        $refunds = self::refunds_for( wp_list_pluck( (array) $raw, 'id' ) );
+        $out     = array();
+        $seen    = array();
+        foreach ( (array) $raw as $r ) {
+            $id = (int) $r['id'];
+            if ( isset( $seen[ $id ] ) ) {
+                continue; // a duplicated meta row must not count an order twice
+            }
+            $seen[ $id ] = true;
+            $status      = 0 === strpos( (string) $r['status'], 'wc-' ) ? substr( $r['status'], 3 ) : (string) $r['status'];
+            $gross       = (float) $r['total'];
+            $out[]       = array(
+                'id'       => $id,
+                'status'   => $status,
+                'total'    => $gross - min( $gross, (float) ( $refunds[ $id ] ?? 0 ) ),
+                'time'     => strtotime( $r['created'] . ' UTC' ),
+                'creator'  => (int) $r['creator'],
+                'discount' => (float) $r['discount'],
+            );
+        }
+        return $out;
+    }
+
+    /**
+     * Everything the Control Center overview needs, from one 31-day query, cached for 2 minutes
+     * and dropped as soon as any order changes.
+     */
+    public static function admin_overview() {
+        $hit = self::cache_get( 'admin', 2 * MINUTE_IN_SECONDS );
+        if ( is_array( $hit ) ) {
+            return $hit;
+        }
+        $tz          = self::tz();
+        $now         = new DateTimeImmutable( 'now', $tz );
+        $today       = self::today_start();
+        $month_start = $today->modify( 'first day of this month' );
+        $from14      = $today->modify( '-13 days' );
+        $from        = min( $month_start, $from14 );
+        $rows        = self::creator_rows( $from, $now );
+
+        $days = array();
+        for ( $i = 0; $i < 14; $i++ ) {
+            $d                              = $from14->modify( '+' . $i . ' days' );
+            $days[ $d->format( 'Y-m-d' ) ] = array( 'date' => $d->format( 'Y-m-d' ), 'staff' => 0.0, 'other' => 0.0, 'staff_n' => 0, 'other_n' => 0 );
+        }
+        $blank = array( 'orders' => 0, 'sales' => 0.0, 'discount' => 0.0, 'void' => 0, 'pending' => 0, 'last' => 0 );
+        $team  = array();
+        $today_ts = $today->getTimestamp();
+        $month_ts = $month_start->getTimestamp();
+        $tot   = array(
+            'today' => array( 'staff' => 0.0, 'staff_n' => 0, 'all' => 0.0, 'all_n' => 0 ),
+            'month' => array( 'staff' => 0.0, 'staff_n' => 0, 'all' => 0.0, 'all_n' => 0 ),
+        );
+
+        foreach ( $rows as $r ) {
+            $sale  = self::is_sale( $r['status'] );
+            $staff = $r['creator'] > 0;
+            $key   = ( new DateTimeImmutable( '@' . $r['time'] ) )->setTimezone( $tz )->format( 'Y-m-d' );
+            if ( $sale && isset( $days[ $key ] ) ) {
+                $days[ $key ][ $staff ? 'staff' : 'other' ]     += $r['total'];
+                $days[ $key ][ $staff ? 'staff_n' : 'other_n' ]++;
+            }
+            foreach ( array( 'today' => $today_ts, 'month' => $month_ts ) as $period => $start ) {
+                if ( $r['time'] < $start || ! $sale ) {
+                    continue;
+                }
+                $tot[ $period ]['all'] += $r['total'];
+                $tot[ $period ]['all_n']++;
+                if ( $staff ) {
+                    $tot[ $period ]['staff'] += $r['total'];
+                    $tot[ $period ]['staff_n']++;
+                }
+            }
+            if ( ! $staff || $r['time'] < $month_ts ) {
+                continue;
+            }
+            $uid = $r['creator'];
+            if ( ! isset( $team[ $uid ] ) ) {
+                $team[ $uid ] = $blank + array( 'today' => 0, 'today_sales' => 0.0 );
+            }
+            $team[ $uid ]['last'] = max( $team[ $uid ]['last'], $r['time'] );
+            if ( $sale ) {
+                $team[ $uid ]['orders']++;
+                $team[ $uid ]['sales']    += $r['total'];
+                $team[ $uid ]['discount'] += $r['discount'];
+                if ( $r['time'] >= $today_ts ) {
+                    $team[ $uid ]['today']++;
+                    $team[ $uid ]['today_sales'] += $r['total'];
+                }
+            } elseif ( in_array( $r['status'], self::UNCONFIRMED_STATUSES, true ) ) {
+                $team[ $uid ]['pending']++;
+            } else {
+                $team[ $uid ]['void']++;
+            }
+        }
+        uasort( $team, static function ( $a, $b ) { return $b['sales'] <=> $a['sales']; } );
+
+        $out = array(
+            'days'  => array_values( $days ),
+            'team'  => $team,
+            'tot'   => $tot,
+            'at'    => time(),
+        );
+        self::cache_set( 'admin', $out, 2 * MINUTE_IN_SECONDS );
+        return $out;
+    }
+
+    /**
+     * Orders created in the staff app, newest first, for the Activity screen and CSV export.
+     *
+     * @param array $args page, per_page, from, to (GMT 'Y-m-d H:i:s'), user_id, status (slug).
+     * @return array{ids:int[], total:int}
+     */
+    public static function staff_orders( $args ) {
+        global $wpdb;
+        $page     = max( 1, absint( $args['page'] ?? 1 ) );
+        $per_page = min( 1000, max( 1, absint( $args['per_page'] ?? 25 ) ) );
+        $params   = array();
+        if ( self::hpos() ) {
+            $orders = \Automattic\WooCommerce\Utilities\OrderUtil::get_table_for_orders();
+            $meta   = self::order_meta_table();
+            $base   = "FROM {$orders} o INNER JOIN {$meta} mc ON mc.order_id = o.id AND mc.meta_key = '_rar_wso_created_by'
+                WHERE o.type = 'shop_order' AND o.status NOT IN ('trash','auto-draft','wc-checkout-draft')";
+            $idcol  = 'o.id';
+            $date   = 'o.date_created_gmt';
+            $stat   = 'o.status';
+        } else {
+            $base  = "FROM {$wpdb->posts} p INNER JOIN {$wpdb->postmeta} mc ON mc.post_id = p.ID AND mc.meta_key = '_rar_wso_created_by'
+                WHERE p.post_type = 'shop_order' AND p.post_status NOT IN ('trash','auto-draft','wc-checkout-draft')";
+            $idcol = 'p.ID';
+            $date  = 'p.post_date_gmt';
+            $stat  = 'p.post_status';
+        }
+        if ( ! empty( $args['from'] ) ) {
+            $base    .= " AND {$date} >= %s";
+            $params[] = (string) $args['from'];
+        }
+        if ( ! empty( $args['to'] ) ) {
+            $base    .= " AND {$date} <= %s";
+            $params[] = (string) $args['to'];
+        }
+        if ( ! empty( $args['user_id'] ) ) {
+            $base    .= ' AND mc.meta_value = %s';
+            $params[] = (string) absint( $args['user_id'] );
+        }
+        if ( ! empty( $args['status'] ) ) {
+            $base    .= " AND {$stat} = %s";
+            $params[] = 'wc-' . sanitize_key( $args['status'] );
+        }
+        // phpcs:disable WordPress.DB.PreparedSQL.NotPrepared
+        $count = "SELECT COUNT(DISTINCT {$idcol}) {$base}";
+        $total = (int) ( $params ? $wpdb->get_var( $wpdb->prepare( $count, $params ) ) : $wpdb->get_var( $count ) );
+        $ids   = $wpdb->get_col( $wpdb->prepare( "SELECT DISTINCT {$idcol} AS id, {$date} AS d {$base} ORDER BY {$date} DESC, {$idcol} DESC LIMIT %d OFFSET %d", array_merge( $params, array( $per_page, ( $page - 1 ) * $per_page ) ) ) );
+        // phpcs:enable
+        return array( 'ids' => array_map( 'absint', (array) $ids ), 'total' => $total );
     }
 }
