@@ -773,6 +773,16 @@ const slipLogoReady = (() => {
     return new Promise(res => { const im = new Image(); im.onload = () => { slipLogo = im; res(im); }; im.onerror = () => res(null); im.src = C.logo; });
 })();
 const slipContact = () => [C.slipAddress, C.slipPhone].filter(Boolean).join('  ·  ');
+/* Product photos on the slip (same-origin thumbnails only — others are skipped, never block the slip). */
+const slipImgs = new Map();
+const sameOrigin = u => { try { return new URL(u, location.href).origin === location.origin; } catch (_) { return false; } };
+function slipLoadImages(o) {
+    const urls = [...new Set((o.lines || []).map(it => it.image).filter(u => u && sameOrigin(u) && !slipImgs.has(u)))];
+    return Promise.all(urls.map(u => new Promise(res => {
+        const im = new Image(); let fin = false; const done = ok => { if (fin) return; fin = true; slipImgs.set(u, ok ? im : null); res(); };
+        im.onload = () => done(true); im.onerror = () => done(false); setTimeout(() => done(false), 6000); im.src = u;
+    })));
+}
 function slipPaint(x, o, D) {
     const W = 1080, PAD = 64, R = W - PAD, INK = '#131b31', MUT = '#66718c', INK2 = '#3a4562', NAVY = /^#[0-9a-f]{6}$/i.test(C.brand || '') ? C.brand : '#15234a';
     const t = (s, X, Y, w, sz, col, al) => { if (!D) return; x.font = SLIP_FONT(w, sz); x.fillStyle = col; x.textAlign = al || 'left'; x.textBaseline = 'alphabetic'; x.fillText(String(s), X, Y); };
@@ -796,7 +806,7 @@ function slipPaint(x, o, D) {
     }
     if (slipLogo) LX = PAD + 132;
     t(fit(String(C.business || 'Sales Order').toUpperCase(), 800, 50, 600 - (LX - PAD)), LX, 98, 800, 50, '#ffffff');
-    t(fit(slipContact() || C.site || '', 500, 24, 600 - (LX - PAD)), LX, 146, 500, 24, 'rgba(255,255,255,.78)');
+    t(fit([C.slipPhone, C.site].filter(Boolean).join('  ·  '), 500, 24, 600 - (LX - PAD)), LX, 146, 500, 24, 'rgba(255,255,255,.78)');
     t('SALES ORDER', R, 94, 800, 32, '#ffffff', 'right');
     t('#' + o.number, R, 146, 800, 42, '#a9bdff', 'right');
     y = 196;
@@ -813,19 +823,24 @@ function slipPaint(x, o, D) {
     wrap(o.address || '', 600, 24, cw).forEach(l => { t(l, X2, yr, 600, 24, INK); yr += 33; });
     wrap([o.city, o.district].filter(Boolean).join(', '), 700, 24, cw).forEach(l => { t(l, X2, yr, 700, 24, INK); yr += 33; });
     y = Math.max(yl, yr) + 14;
-    const cSl = PAD + 22, cItem = PAD + 84, cQty = PAD + 640, cRate = PAD + 800, cAmt = R - 22, itemW = cQty - cItem - 90;
+    const cSl = PAD + 22, cItem = PAD + 84, cQty = PAD + 600, cRate = PAD + 780, cAmt = R - 22, itemW = cQty - cItem - 90;
     box(PAD, y, W - 2 * PAD, 58, '#f2f4f9', 12);
     t('SL', cSl, y + 37, 800, 19, MUT); t('ITEM', cItem, y + 37, 800, 19, MUT);
     t('QTY', cQty, y + 37, 800, 19, MUT, 'right'); t('RATE', cRate, y + 37, 800, 19, MUT, 'right'); t('AMOUNT', cAmt, y + 37, 800, 19, MUT, 'right');
     y += 58;
     (o.lines || []).forEach((it, i) => {
-        const lines = wrap(it.name, 600, 24, itemW);
+        const im = it.image ? slipImgs.get(it.image) : null, TH = 76, tx = im ? cItem + TH + 16 : cItem;
+        const lines = wrap(it.name, 600, 24, itemW - (tx - cItem));
         t(String(i + 1), cSl, y + 42, 700, 24, MUT);
-        lines.forEach((l, k) => t(l, cItem, y + 42 + k * 32, 600, 24, INK));
+        if (im && D) {
+            box(cItem, y + 14, TH, TH, '#f2f4f9', 12);
+            try { const s = Math.min(TH / im.naturalWidth, TH / im.naturalHeight), w = im.naturalWidth * s, h = im.naturalHeight * s; x.save(); x.beginPath(); if (x.roundRect) x.roundRect(cItem, y + 14, TH, TH, 12); else x.rect(cItem, y + 14, TH, TH); x.clip(); x.drawImage(im, cItem + (TH - w) / 2, y + 14 + (TH - h) / 2, w, h); x.restore(); } catch (_) { /* skip photo */ }
+        }
+        lines.forEach((l, k) => t(l, tx, y + 42 + k * 32, 600, 24, INK));
         t(qtyFmt(it.qty), cQty, y + 42, 700, 24, INK, 'right');
         t(money(it.price), cRate, y + 42, 500, 24, MUT, 'right');
         t(money(it.total), cAmt, y + 42, 700, 24, INK, 'right');
-        y += lines.length * 32 + 30; hr(y - 2);
+        y += Math.max(lines.length * 32 + 30, im ? TH + 28 : 0); hr(y - 2);
     });
     y += 40;
     const lx = R - 440;
@@ -845,16 +860,19 @@ function slipPaint(x, o, D) {
     t(`Source: ${o.channel || ''}`, R, y, 500, 22, MUT, 'right'); y += 34;
     if (o.note) wrap('Note: ' + o.note, 500, 22, W - 2 * PAD).forEach(l => { t(l, PAD, y, 500, 22, INK2); y += 30; });
     y += 26;
-    box(0, y, W, 100, '#f2f4f9');
+    const addr = C.slipAddress ? wrap(C.slipAddress, 500, 20, W - 2 * PAD) : [], FH = 100 + addr.length * 28;
+    box(0, y, W, FH, '#f2f4f9');
     t(fit(C.slipFooter || 'Thank you!', 700, 25, W - 2 * PAD), W / 2, y + 46, 700, 25, NAVY, 'center');
-    t(`Generated ${dmy(Date.now())}, ${hm(Date.now())}${C.site ? '  ·  ' + C.site : ''}`, W / 2, y + 78, 500, 19, MUT, 'center');
-    return y + 100;
+    addr.forEach((l, k) => t(l, W / 2, y + 78 + k * 28, 500, 20, INK2, 'center'));
+    t(`Generated ${dmy(Date.now())}, ${hm(Date.now())}${C.site ? '  ·  ' + C.site : ''}`, W / 2, y + 78 + addr.length * 28, 500, 19, MUT, 'center');
+    return y + FH;
 }
 const slipCache = new Map();
 async function makeSlip(o) {
     const key = o.id + '|' + o.status;
     if (slipCache.has(key)) return slipCache.get(key);
     await slipLogoReady;
+    await slipLoadImages(o);
     const c = document.createElement('canvas'), x = c.getContext('2d');
     c.width = 1080; c.height = 10;
     const h = slipPaint(x, o, false);
@@ -868,7 +886,7 @@ async function makeSlip(o) {
         try { url = c.toDataURL('image/png'); }
         catch (e) {
             // The logo made the canvas unreadable (cross-origin redirect): draw the slip without it.
-            if (slipLogo) { slipLogo = null; slipCache.delete(key); return makeSlip(o); }
+            if (slipLogo || [...slipImgs.values()].some(Boolean)) { slipLogo = null; slipImgs.forEach((v, k) => slipImgs.set(k, null)); slipCache.delete(key); return makeSlip(o); }
             throw e;
         }
     }
@@ -876,7 +894,17 @@ async function makeSlip(o) {
     slipCache.set(key, rec);
     return rec;
 }
+const pad2 = n => (n > 0 && n < 10 && Number.isInteger(n) ? '0' : '') + qtyFmt(n);
+/* Short message (default): who, where, what and how many — prices are on the slip image. */
+function orderTextShort(o) {
+    const L = [`*${C.business || 'Sales Order'}*`, `Sales Order #${o.number}`, `Date: ${dmy(o.time * 1000)}, ${hm(o.time * 1000)}`, `Customer: ${o.name}${o.phone ? ' (+88 ' + String(o.phone).replace(/^\+?88/, '') + ')' : ''}`, `Ship to: ${[o.address, o.city, o.district].filter(Boolean).join(', ')}`, ''];
+    (o.lines || []).forEach((it, i) => L.push(`${i + 1}. ${it.name} × ${qtyFmt(it.qty)}`));
+    const units = (o.lines || []).reduce((a, it) => a + Number(it.qty || 0), 0);
+    L.push('', `Item Total: ${pad2(units)} pcs`, '', `Payment: ${o.payment || '—'} · Status: ${stLabel(o.status)}`, 'Thank you');
+    return L.join('\n');
+}
 function orderText(o) {
+    if (C.waFormat !== 'detailed') return orderTextShort(o);
     const L = [`*${C.business || 'Sales Order'} — Sales Order #${o.number}*`, `Date: ${dmy(o.time * 1000)}, ${hm(o.time * 1000)}`, `Customer: ${o.name}${o.phone ? ' (+88 ' + String(o.phone).replace(/^\+?88/, '') + ')' : ''}`, `Ship to: ${[o.address, o.city, o.district].filter(Boolean).join(', ')}`, ''];
     (o.lines || []).forEach((it, i) => L.push(`${i + 1}. ${it.name} × ${qtyFmt(it.qty)} = ${money(it.total)}`));
     L.push('', `Items subtotal: ${money(o.subtotal)}`);

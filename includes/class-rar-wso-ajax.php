@@ -414,8 +414,13 @@ class RAR_WSO_Ajax {
         foreach ( $order->get_items() as $item ) {
             $qty     = (float) $item->get_quantity();
             $product = $item->get_product();
+            $img_id  = $product ? (int) $product->get_image_id() : 0;
+            if ( ! $img_id && $product && $product->is_type( 'variation' ) ) {
+                $img_id = (int) get_post_thumbnail_id( $product->get_parent_id() );
+            }
             $items[] = array(
                 'name'  => wp_strip_all_tags( $item->get_name() ),
+                'image' => $img_id ? (string) wp_get_attachment_image_url( $img_id, 'thumbnail' ) : '',
                 'sku'   => $product ? $product->get_sku() : '',
                 'qty'   => $qty,
                 'price' => $qty ? (float) $item->get_subtotal() / $qty : 0.0,

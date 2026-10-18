@@ -1,4 +1,15 @@
-# RAR Woo Stock & Order v1.4.0
+# RAR Woo Stock & Order v1.4.1
+
+**Release date:** 2026-10-18
+
+- **Sales slip:** product photo on every line, full shop address in the footer, wider rate/amount columns.
+- **WhatsApp message:** short by default (customer, ship-to, items × qty, total pcs, payment, status). *Detailed* is still available in Settings → Branding & slip.
+
+**Download:** `rar-woo-stock-order.zip` (always latest) or `rar-woo-stock-order-v1.4.1.zip`. Upgrade: back up → Plugins → Upload → *Replace current with uploaded* → LiteSpeed *Purge All* → open `/staff/` on each phone once.
+
+---
+
+## Previous release: v1.4.0
 
 **Release date:** 2026-09-26
 

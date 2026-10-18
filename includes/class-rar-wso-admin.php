@@ -206,6 +206,8 @@ class RAR_WSO_Admin {
         // Only an Administrator may let Shop Managers add staff accounts.
         $out['managers_add_staff']   = current_user_can( 'promote_users' ) ? self::flag( $input, 'managers_add_staff', $old, $form ) : $old['managers_add_staff'];
 
+        $out['wa_message'] = 'detailed' === (string) $get( 'wa_message' ) ? 'detailed' : 'short';
+
         // Branding.
         $color              = sanitize_hex_color( (string) $get( 'brand_color' ) );
         $out['brand_color'] = ( $color && 7 === strlen( $color ) ) ? strtolower( $color ) : $old['brand_color'];

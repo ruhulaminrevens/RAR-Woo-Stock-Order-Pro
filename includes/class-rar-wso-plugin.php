@@ -66,6 +66,7 @@ final class RAR_WSO_Plugin {
             'logo_id'              => '0',
             'slip_phone'           => '',
             'slip_address'         => '',
+            'wa_message'           => 'short',
             // v1.4.0 — orders & stock.
             'payment_methods'      => 'cod,bkash,nagad,cash',
             'payment_extra'        => '',

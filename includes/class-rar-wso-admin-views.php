@@ -1224,6 +1224,7 @@ class RAR_WSO_Admin_Views {
                             self::field( __( 'Phone on slip', 'rar-woo-stock-order' ), '', self::inp( 'slip_phone', $s, 'text', 'maxlength="40" placeholder="01XXXXXXXXX"' ), 'rarx-f-slip_phone' );
                             self::field( __( 'Address on slip', 'rar-woo-stock-order' ), '', self::inp( 'slip_address', $s, 'text', 'maxlength="140"' ), 'rarx-f-slip_address' );
                             self::field( __( 'Slip footer line', 'rar-woo-stock-order' ), '', self::inp( 'slip_footer', $s, 'text', 'maxlength="120"' ), 'rarx-f-slip_footer' );
+                            self::field( __( 'WhatsApp message', 'rar-woo-stock-order' ), __( 'Text sent with the slip image. Short: items and quantities only (prices are on the slip). Detailed: every amount and total.', 'rar-woo-stock-order' ), '<select id="rarx-f-wa_message" name="rar_wso_settings[wa_message]"><option value="short"' . selected( $s['wa_message'], 'short', false ) . '>' . esc_html__( 'Short (recommended)', 'rar-woo-stock-order' ) . '</option><option value="detailed"' . selected( $s['wa_message'], 'detailed', false ) . '>' . esc_html__( 'Detailed', 'rar-woo-stock-order' ) . '</option></select>', 'rarx-f-wa_message' );
                             ?>
                         </div>
                         <div class="rarx-preview" aria-hidden="true">

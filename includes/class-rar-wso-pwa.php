@@ -462,6 +462,7 @@ self.addEventListener('fetch', e => {
             'logo'             => RAR_WSO_Plugin::logo_url( 'medium' ),
             'slipPhone'        => (string) $settings['slip_phone'],
             'slipAddress'      => (string) $settings['slip_address'],
+            'waFormat'         => (string) $settings['wa_message'],
             'timezone'         => wp_timezone_string(),
             'tzOffset'         => (int) $tz->getOffset( new DateTime( 'now', $tz ) ),
             'business'         => RAR_WSO_Plugin::business_name(),

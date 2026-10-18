@@ -2,17 +2,21 @@
 
 Mobile-first **WooCommerce stock manager and staff order entry app (PWA)** for teams that work mainly from their phones.
 
-![Version](https://img.shields.io/badge/version-1.4.0-15234a) ![WordPress](https://img.shields.io/badge/WordPress-6.3%2B-21759b) ![WooCommerce](https://img.shields.io/badge/WooCommerce-8.0%2B-7f54b3) ![PHP](https://img.shields.io/badge/PHP-7.4%2B-777bb4)
+![Version](https://img.shields.io/badge/version-1.4.1-15234a) ![WordPress](https://img.shields.io/badge/WordPress-6.3%2B-21759b) ![WooCommerce](https://img.shields.io/badge/WooCommerce-8.0%2B-7f54b3) ![PHP](https://img.shields.io/badge/PHP-7.4%2B-777bb4)
 
 ## ⬇️ Download
 
-### [Download RAR Woo Stock & Order v1.4.0 (ZIP)](https://github.com/ruhulaminrevens/RAR-Woo-Stock-Order-Pro/raw/main/dist/rar-woo-stock-order-v1.4.0.zip)
+| What | Direct link |
+|---|---|
+| **Plugin (always the latest)** | [rar-woo-stock-order.zip](https://github.com/ruhulaminrevens/RAR-Woo-Stock-Order-Pro/releases/latest/download/rar-woo-stock-order.zip) |
+| Plugin v1.4.1 | [rar-woo-stock-order-v1.4.1.zip](https://github.com/ruhulaminrevens/RAR-Woo-Stock-Order-Pro/raw/main/dist/rar-woo-stock-order-v1.4.1.zip) |
+| All versions & release notes | [Releases](https://github.com/ruhulaminrevens/RAR-Woo-Stock-Order-Pro/releases) |
+| **Staff app (phone)** | No app-store download: open `https://your-site.com/staff/` on the phone and tap **Install app** — or scan the QR poster from **WooCommerce → Stock & Order → QR code**. For nabiad.com: **https://www.nabiad.com/staff/** |
 
-- **File:** `rar-woo-stock-order-v1.4.0.zip`
 - **Install:** WordPress → Plugins → Add New → **Upload Plugin**
 - **Upgrade:** choose **Replace current with uploaded**
 
-> ⚠️ Don't use GitHub's green **Code → Download ZIP** button to install the plugin. That archive contains the whole repository, so WordPress would install it as a second, broken plugin. Always use the ZIP link above. It contains the correct `rar-woo-stock-order/` plugin folder.
+> ⚠️ Don't use GitHub's green **Code → Download ZIP** button to install the plugin. That archive contains the whole repository, so WordPress would install it as a second, broken plugin. Always use a link above. It contains the correct `rar-woo-stock-order/` plugin folder.
 
 ## Install / Upgrade
 
@@ -36,7 +40,12 @@ Mobile-first **WooCommerce stock manager and staff order entry app (PWA)** for t
 - Long-press the app icon for the **Create Order** and **Stock Manager** shortcuts (Android).
 - The site must be on **HTTPS**, otherwise the phone won't install the app.
 
-## What's new in v1.4.0: the Control Center
+## What's new in v1.4.1: cleaner slip & short WhatsApp message
+
+- Product photos on the sales slip; shop address in the footer (never cut off).
+- WhatsApp message is short by default — items and quantities, total pcs, payment and status (prices are on the slip). Switch to *Detailed* in **Settings → Branding & slip**.
+
+## v1.4.0: the Control Center
 
 **WooCommerce → Stock & Order** is now a responsive, tabbed control panel:
 
@@ -101,7 +110,8 @@ RAR-Woo-Stock-Order-Pro/
 ├── README.md                          ← this page
 ├── .github/workflows/validate.yml    ← automated checks (CI)
 ├── dist/
-│   └── rar-woo-stock-order-v1.4.0.zip ← installable plugin (download this)
+│   ├── rar-woo-stock-order.zip        ← latest installable plugin
+│   └── rar-woo-stock-order-v1.4.1.zip ← this version
 ├── rar-woo-stock-order.php            ← plugin source code
 ├── includes/
 ├── assets/ (css, js, icons)

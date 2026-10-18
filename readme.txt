@@ -5,7 +5,7 @@ Requires at least: 6.3
 Tested up to: 7.1
 Requires PHP: 7.4
 Requires Plugins: woocommerce
-Stable tag: 1.4.0
+Stable tag: 1.4.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -46,6 +46,9 @@ Features:
 
 == Upgrade Notice ==
 
+= 1.4.1 =
+Slip shows product photos; shorter WhatsApp message (Settings > Branding & slip > WhatsApp message). Open /staff/ on each phone once after updating.
+
 = 1.4.0 =
 New admin Control Center (Overview, Staff, Activity, Settings, Security & Health, Tools, Help). Take a backup first. After updating, open WooCommerce > Stock & Order > Security & Health and review the new Settings sections.
 
@@ -65,6 +68,10 @@ Take a backup, then upload the v1.2.0 ZIP and choose "Replace current with uploa
 If v1.0.0 was installed directly from a GitHub source archive and uses a versioned plugin folder, deactivate/delete the old plugin files first, then install the official v1.1.0 release ZIP. Settings and WooCommerce operational data are preserved.
 
 == Changelog ==
+
+= 1.4.1 =
+* Sales slip shows each product's photo; shop address moves to the slip footer so it is never cut off; wider rate / amount columns.
+* WhatsApp message is short by default (customer, address, items and quantities, total pcs, payment, status). The detailed message is still available in Settings.
 
 = 1.4.0 =
 * New Control Center: live KPI overview with 14-day chart, team leaderboard, stock watch, health score and activity timeline.

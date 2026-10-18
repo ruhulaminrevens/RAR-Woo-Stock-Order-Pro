@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.1 — 2026-10-18
+
+- **Product photos on the sales slip.** Each line shows the product (or parent product) thumbnail. Only images from the shop's own domain are drawn; any other image is skipped so the slip can always be shared.
+- **Shop address no longer cut off.** The header shows phone and website; the full address is printed in the footer, wrapping onto two lines if needed. Rate and amount columns are wider.
+- **Short WhatsApp message (default).** Business name, order number, date, customer, ship-to, items with quantities, total pcs, payment and status — prices stay on the slip image. Choose *Detailed* in Settings → Branding & slip → WhatsApp message for the old full text.
+
 ## 1.4.0 — 2026-09-26
 
 Admin **Control Center** release. WooCommerce → Stock & Order is rebuilt from a single settings page into a responsive, tabbed control panel, with new controls for staff, reports, security and branding. Covered by `tests/smoke.php` (102 checks, HPOS on and off, MariaDB and MySQL 8).

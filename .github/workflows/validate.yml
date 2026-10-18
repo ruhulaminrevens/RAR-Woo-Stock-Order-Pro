@@ -31,11 +31,11 @@ jobs:
         with:
           node-version: 20
       - name: JavaScript syntax
-        run: node --check assets/js/staff.js
+        run: node --check assets/js/staff.js && node --check assets/js/admin.js
       - name: Required files
         run: |
           set -e
-          for f in rar-woo-stock-order.php uninstall.php assets/css/staff.css assets/js/staff.js \
+          for f in rar-woo-stock-order.php uninstall.php assets/css/staff.css assets/js/staff.js assets/css/admin.css assets/js/admin.js \
                    assets/icons/icon-192.png assets/icons/icon-512.png assets/icons/maskable-512.png assets/icons/apple-touch-icon.png; do
             test -f "$f" || { echo "Missing $f"; exit 1; }
           done
