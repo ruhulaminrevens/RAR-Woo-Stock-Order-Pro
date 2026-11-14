@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.5.0 — 2026-11-14
+
+Courier release, built against live nabiad.com screenshots (Create Order showed only the WooCommerce zone rate and Smart Courier then picked a courier by itself). Tested on WordPress 7.1.4 + WooCommerce 11.3.0 with RAR Woo Smart Courier 3.2.x: `tests/smoke.php` now runs 124 checks (22 new), and Create Order, the saved slip and order detail were checked in a browser at 412 px, light and dark.
+
+### Added
+- **Courier picker in Create Order** (`RAR_WSO_Shipping`, AJAX `rar_wso_ship_quote`). Lists every enabled Smart Courier courier for the address with price (zone + parcel weight), delivery date and badges. "Fastest" / "Best price" appear only when one courier alone earns them. Re-quoted when the district, town, address, items, rates or discount change.
+- The chosen courier is written as a shipping line (method `rar_wso_courier`, title = courier name, `_rwsc_*` item meta) and as the Smart Courier shipment on the order (`_rwsc_courier`, `_rwsc_source = manual`, status *Awaiting booking*, log entry). Smart Courier's auto-assign never replaces it, and RWSC auto-send treats it as a real choice.
+- **Free delivery from the WooCommerce zone.** The *Free shipping* method of the matching zone (no requirement / minimum amount, with or without discounts) gives free delivery; coupon-only rules are ignored. Setting: *WooCommerce free shipping* (on). The app's own *Free delivery from* amount now makes every courier free.
+- Setting **Courier & delivery charge**: Smart Courier couriers (default) or Standard Inside / Outside Dhaka charge.
+- Courier in the orders list, order detail (status, tracking link, delivery estimate, source), sales slip and both WhatsApp formats.
+- Health check *Couriers in Create Order*. Order note records the courier, zone, weight and charge (and the courier's own price when staff typed a different charge).
+- `_wc_order_attribution_source_type = admin`, so WooCommerce *Origin* reads "Web admin" instead of "Unknown".
+- Action `rar_wso_courier_applied`.
+
+### Changed
+- `create_order` prices delivery on the server. v1.5 apps send `ship_mode` (`auto` / `manual`) and `courier`; in auto mode the server's charge is used, and a different phone value, an unknown courier or a courier that no longer delivers returns HTTP 409 `reprice` with the fresh quote (nothing is saved). The app shows the new options and total and asks to save again. Before saving, the app waits for any courier price still loading.
+- Older cached apps (no `ship_mode`) keep the typed shipping amount exactly as before.
+- Totals row "Shipping" is called "Delivery"; a plain charge line is titled "Delivery — Inside / Outside Dhaka".
+- `WC tested up to` 11.3.
+
 ## 1.4.1 — 2026-10-18
 
 - **Product photos on the sales slip.** Each line shows the product (or parent product) thumbnail. Only images from the shop's own domain are drawn; any other image is skipped so the slip can always be shared.

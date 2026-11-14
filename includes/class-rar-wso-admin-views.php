@@ -1190,10 +1190,26 @@ class RAR_WSO_Admin_Views {
                 <section class="rarx-card rarx-sec" id="rarx-sec-shipping">
                     <h2><?php self::i( 'truck', 18 ); ?> <?php esc_html_e( 'Shipping', 'rar-woo-stock-order' ); ?></h2>
                     <?php
-                    self::field( __( 'Inside Dhaka', 'rar-woo-stock-order' ), __( 'Filled in automatically when the district is Dhaka. Staff can still change it on the order.', 'rar-woo-stock-order' ), self::inp( 'shipping_dhaka', $s, 'number', 'min="0" step="0.01" class="small"', '', $cur ), 'rarx-f-shipping_dhaka' );
+                    if ( RAR_WSO_Shipping::smart_installed() ) {
+                        $n_couriers = class_exists( 'RWSC_Settings' ) ? count( (array) RWSC_Settings::couriers( true ) ) : 0;
+                        $sc_state   = RWSC_Settings::on( 'enabled' )
+                            /* translators: 1: version, 2: number of couriers */
+                            ? sprintf( __( 'RAR Woo Smart Courier %1$s is active with %2$d enabled courier(s).', 'rar-woo-stock-order' ), defined( 'RWSC_VERSION' ) ? RWSC_VERSION : '', $n_couriers )
+                            : __( 'RAR Woo Smart Courier is installed but switched off in its own settings — the standard charges below are used.', 'rar-woo-stock-order' );
+                    } else {
+                        $sc_state = __( 'RAR Woo Smart Courier is not active — the standard charges below are used.', 'rar-woo-stock-order' );
+                    }
+                    self::field(
+                        __( 'Courier & delivery charge', 'rar-woo-stock-order' ),
+                        __( 'Smart Courier: staff pick a courier with its own price and delivery date, exactly like checkout, and the order is saved with that courier (never an automatic pick). Standard: one Inside / Outside Dhaka charge, no courier.', 'rar-woo-stock-order' ),
+                        '<select id="rarx-f-courier_mode" name="rar_wso_settings[courier_mode]"><option value="smart"' . selected( $s['courier_mode'], 'smart', false ) . '>' . esc_html__( 'Smart Courier couriers (recommended)', 'rar-woo-stock-order' ) . '</option><option value="basic"' . selected( $s['courier_mode'], 'basic', false ) . '>' . esc_html__( 'Standard Inside / Outside Dhaka charge', 'rar-woo-stock-order' ) . '</option></select><p class="description" style="margin:6px 0 0">' . esc_html( $sc_state ) . '</p>',
+                        'rarx-f-courier_mode'
+                    );
+                    self::field( __( 'WooCommerce free shipping', 'rar-woo-stock-order' ), __( 'Give free delivery when the "Free shipping" method of the customer\'s WooCommerce shipping zone would (no requirement, or its minimum order amount). Coupon-only rules are ignored.', 'rar-woo-stock-order' ), self::sw( 'follow_wc_free', __( 'Follow the shipping zone\'s free-shipping rule', 'rar-woo-stock-order' ), $s ) );
+                    self::field( __( 'Inside Dhaka', 'rar-woo-stock-order' ), __( 'Standard charge for Dhaka district — also used when Smart Courier cannot price an address. Staff can still change it on the order.', 'rar-woo-stock-order' ), self::inp( 'shipping_dhaka', $s, 'number', 'min="0" step="0.01" class="small"', '', $cur ), 'rarx-f-shipping_dhaka' );
                     self::field( __( 'Outside Dhaka', 'rar-woo-stock-order' ), __( 'Used for every other district.', 'rar-woo-stock-order' ), self::inp( 'shipping_outside', $s, 'number', 'min="0" step="0.01" class="small"', '', $cur ), 'rarx-f-shipping_outside' );
                     self::field( __( 'Before a district is chosen', 'rar-woo-stock-order' ), __( 'Also used when the two fields above are empty.', 'rar-woo-stock-order' ), self::inp( 'default_shipping', $s, 'number', 'min="0" step="0.01" class="small"', '', $cur ), 'rarx-f-default_shipping' );
-                    self::field( __( 'Free delivery from', 'rar-woo-stock-order' ), __( 'Items subtotal at which the automatic shipping becomes 0. 0 = never. Staff can still type a charge.', 'rar-woo-stock-order' ), self::inp( 'free_shipping_over', $s, 'number', 'min="0" step="1" class="small"', '', $cur ), 'rarx-f-free_shipping_over' );
+                    self::field( __( 'Free delivery from', 'rar-woo-stock-order' ), __( 'Items subtotal at which the automatic charge becomes 0 (for every courier). 0 = off. Staff can still type a charge.', 'rar-woo-stock-order' ), self::inp( 'free_shipping_over', $s, 'number', 'min="0" step="1" class="small"', '', $cur ), 'rarx-f-free_shipping_over' );
                     ?>
                 </section>
 

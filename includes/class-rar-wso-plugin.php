@@ -22,6 +22,7 @@ final class RAR_WSO_Plugin {
         require_once RAR_WSO_PATH . 'includes/class-rar-wso-health.php';
         require_once RAR_WSO_PATH . 'includes/class-rar-wso-digest.php';
         require_once RAR_WSO_PATH . 'includes/class-rar-wso-integrations.php';
+        require_once RAR_WSO_PATH . 'includes/class-rar-wso-shipping.php';
         require_once RAR_WSO_PATH . 'includes/class-rar-wso-admin.php';
         require_once RAR_WSO_PATH . 'includes/class-rar-wso-ajax.php';
         require_once RAR_WSO_PATH . 'includes/class-rar-wso-pwa.php';
@@ -72,6 +73,9 @@ final class RAR_WSO_Plugin {
             'payment_extra'        => '',
             'payment_default'      => 'cod',
             'free_shipping_over'   => '0',
+            // v1.5.0 — couriers.
+            'courier_mode'         => 'smart',
+            'follow_wc_free'       => 'yes',
             'stock_reasons'        => "Restock — new shipment\nCount correction\nDamaged / expired\nCustomer return\nTransfer in\nTransfer out",
             // v1.4.0 — access & security.
             'login_user_limit'     => '6',

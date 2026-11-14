@@ -55,6 +55,7 @@ class RAR_WSO_Ajax {
             'order_status' => 'order_status',
             'create_order' => 'create_order',
             'customer'     => 'customer',
+            'ship_quote'   => 'ship_quote',
         ) as $action => $method ) {
             add_action( 'wp_ajax_rar_wso_' . $action, array( $this, $method ) );
         }
@@ -405,6 +406,7 @@ class RAR_WSO_Ajax {
             'total'        => (float) $order->get_total(),
             'payment'      => $order->get_payment_method_title(),
             'channel'      => RAR_WSO_Reports::channel_label( $order->get_created_via() ),
+            'courier'      => RAR_WSO_Shipping::order_courier( $order ),
         );
     }
 
@@ -1270,6 +1272,48 @@ class RAR_WSO_Ajax {
         return isset( $enabled[ $key ] ) ? $key : (string) key( $enabled );
     }
 
+    /**
+     * Delivery options for the order being typed in the staff app (couriers, prices, dates).
+     * Nothing is saved; create_order() prices the courier again from the same rules.
+     */
+    public function ship_quote() {
+        $this->guard( 'rar_wso_create_orders' );
+        $req = isset( $_POST['req'] ) ? json_decode( wp_unslash( $_POST['req'] ), true ) : null; // phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+        if ( ! is_array( $req ) ) {
+            wp_send_json_error( array( 'message' => __( 'Invalid request.', 'rar-woo-stock-order' ) ), 422 );
+        }
+        $state = $this->district_to_state_code( sanitize_text_field( (string) ( $req['district'] ?? '' ) ) );
+        $lines = array();
+        $sub   = 0.0;
+        foreach ( array_slice( (array) ( $req['items'] ?? array() ), 0, self::MAX_LINES ) as $raw ) {
+            if ( ! is_array( $raw ) ) {
+                continue;
+            }
+            $product = wc_get_product( absint( $raw['id'] ?? 0 ) );
+            if ( ! $product ) {
+                continue;
+            }
+            $qty     = min( self::MAX_QTY, max( 1, absint( $raw['qty'] ?? 1 ) ) );
+            $price   = isset( $raw['price'] ) && is_numeric( $raw['price'] ) ? max( 0, (float) $raw['price'] ) : (float) $product->get_price();
+            $lines[] = array( $product, $qty );
+            $sub    += $price * $qty;
+        }
+        $dv   = max( 0, (float) ( $req['discount'] ?? 0 ) );
+        $disc = 'percent' === ( $req['discount_type'] ?? '' ) ? $sub * min( 100, $dv ) / 100 : min( $dv, $sub );
+        wp_send_json_success(
+            RAR_WSO_Shipping::quote(
+                array(
+                    'state'          => $state,
+                    'city'           => sanitize_text_field( (string) ( $req['city'] ?? '' ) ),
+                    'address'        => sanitize_textarea_field( (string) ( $req['address'] ?? '' ) ),
+                    'lines'          => $lines,
+                    'subtotal'       => $sub,
+                    'after_discount' => max( 0, $sub - $disc ),
+                )
+            )
+        );
+    }
+
     public function create_order() {
         $this->guard( 'rar_wso_create_orders' );
 
@@ -1289,6 +1333,11 @@ class RAR_WSO_Ajax {
         $disc_type  = 'percent' === ( $payload['discount_type'] ?? '' ) ? 'percent' : 'amount';
         $disc_value = max( 0, (float) wc_format_decimal( $payload['discount'] ?? 0 ) );
         $request_id = substr( sanitize_key( $payload['request_id'] ?? '' ), 0, 64 );
+        // v1.5 apps send ship_mode (auto|manual) and the chosen courier; older cached apps send
+        // only a typed shipping amount, which is kept exactly as before.
+        $new_client  = isset( $payload['ship_mode'] );
+        $ship_mode   = ( ! $new_client || 'manual' === $payload['ship_mode'] ) ? 'manual' : 'auto';
+        $courier_key = sanitize_key( (string) ( $payload['courier'] ?? '' ) );
         $items      = isset( $payload['items'] ) && is_array( $payload['items'] ) ? array_values( $payload['items'] ) : array();
 
         if ( $name === '' || $phone_raw === '' || $address === '' || $city === '' || $district === '' || empty( $items ) ) {
@@ -1358,10 +1407,6 @@ class RAR_WSO_Ajax {
 
         $settings     = RAR_WSO_Plugin::settings();
         $can_override = 'yes' === $settings['allow_price_override'] && RAR_WSO_Plugin::can( 'rar_wso_adjust_price' );
-        $shipping     = max(
-            0,
-            (float) apply_filters( 'rar_wso_shipping_total', $shipping, $payload, get_current_user_id() )
-        );
 
         $payments = self::enabled_payment_options();
         $chosen   = sanitize_key( $payload['payment'] ?? '' );
@@ -1424,6 +1469,59 @@ class RAR_WSO_Ajax {
             }
             wp_send_json_error( array( 'message' => $message ), 422 );
         }
+
+        /*
+         * Delivery: price the courier on the server from the real items (weight) and address, so the
+         * saved charge and courier are exactly what Smart Courier quotes — never a stale phone value.
+         */
+        $ship_quote = RAR_WSO_Shipping::quote(
+            array(
+                'state'          => $district_code,
+                'city'           => $city,
+                'address'        => $address,
+                'lines'          => array_map(
+                    static function ( $l ) {
+                        return array( $l['product'], $l['qty'] );
+                    },
+                    $lines
+                ),
+                'subtotal'       => $items_subtotal,
+                'after_discount' => max( 0, $items_subtotal - $discount ),
+            )
+        );
+        $ship_pick  = null;
+        $reprice    = '';
+        if ( $new_client ) {
+            if ( 'smart' === $ship_quote['engine'] ) {
+                $ship_pick = RAR_WSO_Shipping::pick( $ship_quote, '' !== $courier_key ? $courier_key : $ship_quote['recommended'] );
+                if ( ! $ship_pick ) {
+                    $reprice = __( 'The courier you picked does not deliver this order any more. Pick a courier again, then save.', 'rar-woo-stock-order' );
+                }
+            } elseif ( '' !== $courier_key ) {
+                $reprice = __( 'Courier options changed. Check the delivery charge, then save again.', 'rar-woo-stock-order' );
+            }
+            if ( '' === $reprice && 'auto' === $ship_mode ) {
+                $server_ship = $ship_pick ? (float) $ship_pick['cost'] : (float) $ship_quote['basic'];
+                if ( abs( $server_ship - $shipping ) > 0.009 ) {
+                    $reprice = sprintf(
+                        /* translators: 1: new delivery charge */
+                        __( 'The delivery charge for this order is now %s. Check the total, then save again.', 'rar-woo-stock-order' ),
+                        trim( html_entity_decode( wp_strip_all_tags( wc_price( $server_ship ) ), ENT_QUOTES, 'UTF-8' ), " \t\n\r\0\x0B\xC2\xA0" )
+                    );
+                }
+                $shipping = $server_ship;
+            }
+            if ( '' !== $reprice ) {
+                if ( $req_lock ) {
+                    RAR_WSO_Lock::release( $req_lock );
+                }
+                wp_send_json_error( array( 'message' => $reprice, 'reprice' => true, 'quote' => $ship_quote ), 409 );
+            }
+        }
+        $shipping = max(
+            0,
+            (float) apply_filters( 'rar_wso_shipping_total', $shipping, $payload, get_current_user_id() )
+        );
 
         /*
          * 3) Stock: lock every product this order takes stock from (in a fixed order, so two
@@ -1514,13 +1612,7 @@ class RAR_WSO_Ajax {
                 $order->update_meta_data( '_rar_wso_discount', wc_format_decimal( $discount ) );
             }
 
-            if ( $shipping > 0 ) {
-                $shipping_item = new WC_Order_Item_Shipping();
-                $shipping_item->set_method_title( __( 'Staff order delivery', 'rar-woo-stock-order' ) );
-                $shipping_item->set_method_id( 'rar_wso_manual_shipping' );
-                $shipping_item->set_total( $shipping );
-                $order->add_item( $shipping_item );
-            }
+            RAR_WSO_Shipping::apply( $order, $ship_quote, $ship_pick, $shipping, 'manual' === $ship_mode );
 
             $payment_method = sanitize_key( apply_filters( 'rar_wso_payment_method', $chosen, $payload, $order ) );
             $payment_title  = $payments[ $payment_method ] ?? $payments[ $chosen ];
@@ -1536,6 +1628,10 @@ class RAR_WSO_Ajax {
             $order->set_payment_method_title( $payment_title );
             $order->update_meta_data( '_rar_wso_created_by', get_current_user_id() );
             $order->update_meta_data( '_rar_wso_channel', 'staff-pwa' );
+            // WooCommerce "Order attribution → Origin": staff-entered order (shows "Web admin", not "Unknown").
+            if ( '' === (string) $order->get_meta( '_wc_order_attribution_source_type' ) ) {
+                $order->update_meta_data( '_wc_order_attribution_source_type', 'admin' );
+            }
             if ( $request_id !== '' ) {
                 $order->update_meta_data( '_rar_wso_request_id', $request_id );
             }
@@ -1565,8 +1661,18 @@ class RAR_WSO_Ajax {
             $locks = array();
 
             $user = wp_get_current_user();
+            $courier_note = '';
+            if ( $ship_pick ) {
+                $courier_note = sprintf(
+                    ' Courier: %1$s%2$s, delivery %3$s%4$s.',
+                    $ship_pick['name'],
+                    '' !== $ship_quote['zone_label'] ? ' (' . $ship_quote['zone_label'] . ', ' . wc_format_localized_decimal( $ship_quote['weight'] ) . ' kg)' : '',
+                    trim( html_entity_decode( wp_strip_all_tags( wc_price( $shipping ) ), ENT_QUOTES, 'UTF-8' ), " \t\n\r\0\x0B\xC2\xA0" ),
+                    'manual' === $ship_mode && abs( $shipping - (float) $ship_pick['cost'] ) > 0.009 ? ' — typed by staff, courier price ' . trim( html_entity_decode( wp_strip_all_tags( wc_price( $ship_pick['cost'] ) ), ENT_QUOTES, 'UTF-8' ), " \t\n\r\0\x0B\xC2\xA0" ) : ''
+                );
+            }
             $order->add_order_note(
-                sprintf( 'Created via RAR Woo Stock & Order by %s (#%d).', $user->display_name, $user->ID ),
+                sprintf( 'Created via RAR Woo Stock & Order by %s (#%d).', $user->display_name, $user->ID ) . $courier_note,
                 false,
                 true
             );

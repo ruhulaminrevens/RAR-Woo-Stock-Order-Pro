@@ -187,7 +187,7 @@ class RAR_WSO_Admin {
         $out = RAR_WSO_Plugin::defaults();
 
         // General.
-        foreach ( array( 'enabled', 'allow_price_override', 'staff_view_orders', 'digest_enabled', 'admin_bar_link', 'dashboard_widget', 'order_column' ) as $k ) {
+        foreach ( array( 'enabled', 'allow_price_override', 'staff_view_orders', 'digest_enabled', 'admin_bar_link', 'dashboard_widget', 'order_column', 'follow_wc_free' ) as $k ) {
             $out[ $k ] = self::flag( $input, $k, $old, $form );
         }
         $out['staff_slug']           = sanitize_title( (string) $get( 'staff_slug' ) );
@@ -198,6 +198,7 @@ class RAR_WSO_Admin {
         $out['shipping_dhaka']       = self::money_in( $get( 'shipping_dhaka' ) );
         $out['shipping_outside']     = self::money_in( $get( 'shipping_outside' ) );
         $out['free_shipping_over']   = (string) ( self::money_in( $get( 'free_shipping_over' ) ) ?: '0' );
+        $out['courier_mode']         = 'basic' === (string) $get( 'courier_mode' ) ? 'basic' : 'smart';
         $out['low_stock_threshold']  = (string) max( 1, absint( $get( 'low_stock_threshold' ) ) );
         $out['business_name']        = sanitize_text_field( (string) $get( 'business_name' ) );
         $out['slip_footer']          = sanitize_text_field( (string) $get( 'slip_footer' ) );

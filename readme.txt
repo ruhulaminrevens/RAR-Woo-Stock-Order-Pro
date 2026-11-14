@@ -5,7 +5,7 @@ Requires at least: 6.3
 Tested up to: 7.1
 Requires PHP: 7.4
 Requires Plugins: woocommerce
-Stable tag: 1.4.1
+Stable tag: 1.5.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -46,6 +46,9 @@ Features:
 
 == Upgrade Notice ==
 
+= 1.5.0 =
+Create Order shows RAR Woo Smart Courier couriers with price and delivery date; the chosen courier is saved on the order (no more automatic pick). Review Settings > Shipping, then open /staff/ on each phone once.
+
 = 1.4.1 =
 Slip shows product photos; shorter WhatsApp message (Settings > Branding & slip > WhatsApp message). Open /staff/ on each phone once after updating.
 
@@ -68,6 +71,14 @@ Take a backup, then upload the v1.2.0 ZIP and choose "Replace current with uploa
 If v1.0.0 was installed directly from a GitHub source archive and uses a versioned plugin folder, deactivate/delete the old plugin files first, then install the official v1.1.0 release ZIP. Settings and WooCommerce operational data are preserved.
 
 == Changelog ==
+
+= 1.5.0 =
+* Create Order: pick a courier from RAR Woo Smart Courier (price, delivery date, Recommended / Fastest / Best price). The delivery charge follows the courier, zone and parcel weight.
+* The chosen courier is saved like a checkout choice ("Set by staff"), so Smart Courier no longer replaces it with an automatic pick and courier auto-send uses it.
+* The server prices every order again: a stale or edited automatic charge, or a courier that no longer delivers, is refused with the new options instead of being saved.
+* Free delivery follows the shipping zone's WooCommerce "Free shipping" minimum (optional) as well as the app's own amount.
+* Courier shown in order lists, order detail, sales slip and WhatsApp message. WooCommerce Origin shows "Web admin" instead of "Unknown".
+* New settings: Courier & delivery charge, WooCommerce free shipping. New health check for the courier connection.
 
 = 1.4.1 =
 * Sales slip shows each product's photo; shop address moves to the slip footer so it is never cut off; wider rate / amount columns.

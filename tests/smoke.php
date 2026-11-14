@@ -600,6 +600,144 @@ try {
 	rar_ok( false !== strpos( $app, '--top:#0a7f6a' ) && false !== strpos( $app, '"freeShipOver":3000' ) && false !== strpos( $app, '"payDefault":"bkash"' ), 'staff app picks up brand colour, free delivery and default payment' );
 	update_option( 'rar_wso_settings', $before );
 
+	echo "\nCouriers & delivery charge (v1.5.0)\n";
+	rar_login( $staff );
+	$sc_on = class_exists( 'RWSC_Engine' ) && class_exists( 'RWSC_Settings' ) && RWSC_Settings::on( 'enabled' );
+	rar_settings( array( 'courier_mode' => 'smart', 'follow_wc_free' => 'yes', 'free_shipping_over' => '0', 'default_order_status' => 'processing' ) );
+	$q_req = function ( $district, $items, $extra = array() ) {
+		return rar_call( 'ship_quote', array( 'req' => wp_json_encode( array_merge( array( 'district' => $district, 'city' => 'Dhanmondi', 'address' => 'House 1, Road 2', 'items' => $items, 'discount_type' => 'amount', 'discount' => 0 ), $extra ) ) ) );
+	};
+	$get = function ( $r ) { return $r['data'] ?? array(); };
+	if ( ! $sc_on ) {
+		echo "  SKIP  Smart Courier not active — courier tests skipped\n";
+	} else {
+		list( $st, $r ) = $q_req( 'Dhaka', array( array( 'id' => $p2, 'qty' => 1 ) ) );
+		$q = $get( $r );
+		rar_ok( 200 === $st && 'smart' === ( $q['engine'] ?? '' ) && count( $q['quotes'] ?? array() ) > 0 && '' !== ( $q['recommended'] ?? '' ) && 'dhaka' === ( $q['zone'] ?? '' ), 'ship_quote lists Smart Courier couriers for Dhaka', "$st " . wp_json_encode( $q ) );
+		list( $st, $r ) = $q_req( 'Chattogram', array( array( 'id' => $p2, 'qty' => 1 ) ) );
+		rar_ok( 200 === $st && 'outside' === ( $get( $r )['zone'] ?? '' ), 'ship_quote prices Outside Dhaka', "$st" );
+		list( $st ) = rar_call( 'ship_quote', array( 'req' => 'not json' ) );
+		rar_ok( 422 === $st, 'ship_quote refuses bad input', "$st" );
+
+		// Pick a courier that is NOT the recommended one, so an automatic pick would be visible.
+		$alt = null;
+		foreach ( $q['quotes'] as $row ) {
+			if ( $row['key'] !== $q['recommended'] ) { $alt = $row; break; }
+		}
+		$alt = $alt ? $alt : $q['quotes'][0];
+		list( $st, $r ) = rar_call( 'create_order', array( 'payload' => rar_payload( array( array( 'id' => $p2, 'qty' => 1 ) ), array( 'ship_mode' => 'auto', 'courier' => $alt['key'], 'shipping' => $alt['cost'] ) ) ) );
+		$co = 200 === $st ? wc_get_order( $r['data']['order']['id'] ) : null;
+		$created[] = $co ? $co->get_id() : 0;
+		$sh = $co ? array_values( $co->get_shipping_methods() ) : array();
+		rar_ok( $co && abs( (float) $co->get_shipping_total() - $alt['cost'] ) < 0.01 && 1 === count( $sh ) && RAR_WSO_Shipping::METHOD_ID === $sh[0]->get_method_id() && $alt['name'] === $sh[0]->get_method_title(), 'chosen courier and its price are saved as the shipping line', "$st " . wp_json_encode( $r ) );
+		wp_cache_flush();
+		$co = $co ? wc_get_order( $co->get_id() ) : null;
+		$shp = $co ? rwsc_get_shipment( $co ) : null;
+		rar_ok( $co && $alt['key'] === $co->get_meta( '_rwsc_courier' ) && 'manual' === $co->get_meta( '_rwsc_source' ) && $shp && $alt['key'] === $shp['courier'] && 'pending' === $shp['status'], 'Smart Courier sees the staff courier ("Set by staff"), not an automatic pick', $co ? $co->get_meta( '_rwsc_courier' ) . '/' . $co->get_meta( '_rwsc_source' ) : '' );
+		rar_ok( $co && 'processing' === $co->get_status() && $alt['name'] === ( $r['data']['order']['courier']['name'] ?? '' ), 'order reaches Processing with the courier kept and returned to the app', $co ? $co->get_status() : '' );
+		if ( $co ) {
+			$co->update_status( 'on-hold' );
+			$co->update_status( 'processing' );
+			wp_cache_flush();
+			$co = wc_get_order( $co->get_id() );
+		}
+		rar_ok( $co && $alt['key'] === $co->get_meta( '_rwsc_courier' ), 'status changes never replace the staff courier', $co ? $co->get_meta( '_rwsc_courier' ) : '' );
+		$dispatch_choice = class_exists( 'RWSC_Order_Data' ) && $co ? RWSC_Order_Data::chosen_courier( $co ) : $alt['name'];
+		rar_ok( $alt['name'] === $dispatch_choice, 'courier auto-send treats it as a real choice', (string) $dispatch_choice );
+		list( $st, $r ) = rar_call( 'order_detail', array( 'id' => $co ? $co->get_id() : 0 ) );
+		rar_ok( 200 === $st && $alt['name'] === ( $r['data']['order']['courier']['name'] ?? $r['data']['courier']['name'] ?? '' ), 'order detail shows the courier', "$st" );
+
+		// Stale / tampered price is refused (nothing saved) and the fresh quote comes back.
+		$n_before = count( wc_get_orders( array( 'limit' => -1, 'return' => 'ids', 'created_via' => 'rar-wso-staff' ) ) );
+		list( $st, $r ) = rar_call( 'create_order', array( 'payload' => rar_payload( array( array( 'id' => $p2, 'qty' => 1 ) ), array( 'ship_mode' => 'auto', 'courier' => $alt['key'], 'shipping' => 1 ) ) ) );
+		$n_after = count( wc_get_orders( array( 'limit' => -1, 'return' => 'ids', 'created_via' => 'rar-wso-staff' ) ) );
+		rar_ok( 409 === $st && ! empty( $r['data']['reprice'] ) && ! empty( $r['data']['quote']['quotes'] ) && $n_before === $n_after, 'a stale automatic charge is refused with the new quote; no order', "$st" );
+		list( $st, $r ) = rar_call( 'create_order', array( 'payload' => rar_payload( array( array( 'id' => $p2, 'qty' => 1 ) ), array( 'ship_mode' => 'auto', 'courier' => 'rartest-nope', 'shipping' => 60 ) ) ) );
+		rar_ok( 409 === $st && ! empty( $r['data']['reprice'] ), 'an unknown / unavailable courier is refused', "$st" );
+
+		// Manual charge keeps the courier; the note records the courier's own price.
+		list( $st, $r ) = rar_call( 'create_order', array( 'payload' => rar_payload( array( array( 'id' => $p2, 'qty' => 1 ) ), array( 'ship_mode' => 'manual', 'courier' => $alt['key'], 'shipping' => 45 ) ) ) );
+		$mo = 200 === $st ? wc_get_order( $r['data']['order']['id'] ) : null;
+		$created[] = $mo ? $mo->get_id() : 0;
+		$notes = $mo ? implode( ' ', wp_list_pluck( wc_get_order_notes( array( 'order_id' => $mo->get_id() ) ), 'content' ) ) : '';
+		rar_ok( $mo && abs( (float) $mo->get_shipping_total() - 45 ) < 0.01 && $alt['key'] === $mo->get_meta( '_rwsc_courier' ) && false !== strpos( $notes, 'typed by staff' ), 'a typed charge is kept with the courier and noted', "$st $notes" );
+
+		// No courier sent → the recommended one is recorded (what the app showed as selected).
+		list( $st, $r ) = rar_call( 'create_order', array( 'payload' => rar_payload( array( array( 'id' => $p2, 'qty' => 1 ) ), array( 'ship_mode' => 'auto', 'courier' => '', 'shipping' => RAR_WSO_Shipping::pick( $q, $q['recommended'] )['cost'] ) ) ) );
+		$ro = 200 === $st ? wc_get_order( $r['data']['order']['id'] ) : null;
+		$created[] = $ro ? $ro->get_id() : 0;
+		rar_ok( $ro && $q['recommended'] === $ro->get_meta( '_rwsc_courier' ), 'without a tap the recommended courier is saved', "$st" );
+
+		// Free delivery from the staff setting: every courier free, saved as free.
+		rar_settings( array( 'free_shipping_over' => '900' ) );
+		list( $st, $r ) = $q_req( 'Dhaka', array( array( 'id' => $p2, 'qty' => 2 ) ) );
+		$fq = $get( $r );
+		$all0 = ! empty( $fq['quotes'] ) && 0.0 === array_sum( array_map( 'floatval', wp_list_pluck( $fq['quotes'], 'cost' ) ) );
+		rar_ok( 200 === $st && ! empty( $fq['free'] ) && $all0, '"Free delivery from" makes every courier free', wp_json_encode( $fq ) );
+		list( $st, $r ) = rar_call( 'create_order', array( 'payload' => rar_payload( array( array( 'id' => $p2, 'qty' => 2 ) ), array( 'ship_mode' => 'auto', 'courier' => $alt['key'], 'shipping' => 0 ) ) ) );
+		$fo = 200 === $st ? wc_get_order( $r['data']['order']['id'] ) : null;
+		$created[] = $fo ? $fo->get_id() : 0;
+		rar_ok( $fo && 0.0 === (float) $fo->get_shipping_total() && 1 === count( $fo->get_shipping_methods() ) && 'yes' === $fo->get_meta( '_rwsc_free_applied' ), 'free order keeps the courier line at 0', "$st" );
+		rar_settings( array( 'free_shipping_over' => '0' ) );
+
+		// WooCommerce zone "Free shipping" with a minimum amount.
+		// Put a test zone first (zone order cannot be negative, so existing zones move down for a moment).
+		$moved = array();
+		foreach ( WC_Shipping_Zones::get_zones() as $zd ) {
+			$zz = new WC_Shipping_Zone( $zd['id'] );
+			$moved[ $zd['id'] ] = $zz->get_zone_order();
+			$zz->set_zone_order( $moved[ $zd['id'] ] + 1000 );
+			$zz->save();
+		}
+		$fz = new WC_Shipping_Zone();
+		$fz->set_zone_name( 'RARTEST free zone' );
+		$fz->set_zone_order( 0 );
+		$fz->add_location( 'BD:BD-13', 'state' );
+		$fz->save();
+		$iid = $fz->add_shipping_method( 'free_shipping' );
+		update_option( "woocommerce_free_shipping_{$iid}_settings", array( 'title' => 'RARTEST Free', 'requires' => 'min_amount', 'min_amount' => '1200', 'ignore_discounts' => 'no' ) );
+		$fz->add_shipping_method( 'flat_rate' );
+		WC_Cache_Helper::get_transient_version( 'shipping', true );
+		list( $st, $r ) = $q_req( 'Dhaka', array( array( 'id' => $p2, 'qty' => 2 ) ) );
+		$under = $get( $r );
+		list( $st2, $r2 ) = $q_req( 'Dhaka', array( array( 'id' => $p2, 'qty' => 3 ) ) );
+		$over = $get( $r2 );
+		list( $st3, $r3 ) = $q_req( 'Dhaka', array( array( 'id' => $p2, 'qty' => 3 ) ), array( 'discount' => 400 ) );
+		$disc = $get( $r3 );
+		rar_ok( empty( $under['free'] ) && ! empty( $over['free'] ) && false !== strpos( (string) $over['free_reason'], 'RARTEST Free' ) && empty( $disc['free'] ), 'zone free-shipping minimum is followed (after discount)', wp_json_encode( array( $under['free'] ?? null, $over['free'] ?? null, $disc['free'] ?? null ) ) );
+		rar_settings( array( 'follow_wc_free' => 'no' ) );
+		list( $st, $r ) = $q_req( 'Dhaka', array( array( 'id' => $p2, 'qty' => 3 ) ) );
+		rar_ok( empty( $get( $r )['free'] ), 'zone free-shipping rule can be switched off' );
+		rar_settings( array( 'follow_wc_free' => 'yes' ) );
+		$fz->delete();
+		foreach ( $moved as $zid => $ord ) {
+			$zz = new WC_Shipping_Zone( $zid );
+			$zz->set_zone_order( $ord );
+			$zz->save();
+		}
+		WC_Cache_Helper::get_transient_version( 'shipping', true );
+	}
+
+	// Standard mode: Inside / Outside Dhaka charge, no courier written by the staff app.
+	rar_settings( array( 'courier_mode' => 'basic', 'shipping_dhaka' => '60', 'shipping_outside' => '120' ) );
+	list( $st, $r ) = $q_req( 'Chattogram', array( array( 'id' => $p2, 'qty' => 1 ) ) );
+	rar_ok( 200 === $st && 'basic' === ( $get( $r )['engine'] ?? '' ) && 120.0 === (float) ( $get( $r )['basic'] ?? 0 ), 'standard mode quotes the Outside Dhaka charge', "$st" );
+	list( $st, $r ) = rar_call( 'create_order', array( 'payload' => rar_payload( array( array( 'id' => $p2, 'qty' => 1 ) ), array( 'ship_mode' => 'auto', 'courier' => '', 'shipping' => 60 ) ) ) );
+	$bo = 200 === $st ? wc_get_order( $r['data']['order']['id'] ) : null;
+	$created[] = $bo ? $bo->get_id() : 0;
+	$bsh = $bo ? array_values( $bo->get_shipping_methods() ) : array();
+	rar_ok( $bo && 60.0 === (float) $bo->get_shipping_total() && $bsh && RAR_WSO_Shipping::MANUAL_METHOD_ID === $bsh[0]->get_method_id() && 'manual' !== $bo->get_meta( '_rwsc_source' ), 'standard mode saves the district charge without a staff courier', "$st" );
+	list( $st, $r ) = rar_call( 'create_order', array( 'payload' => rar_payload( array( array( 'id' => $p2, 'qty' => 1 ) ), array( 'ship_mode' => 'auto', 'courier' => '', 'shipping' => 999 ) ) ) );
+	rar_ok( 409 === $st && ! empty( $r['data']['reprice'] ), 'standard mode refuses a wrong automatic charge too', "$st" );
+	// An older cached app (no ship_mode) keeps working exactly as before.
+	rar_settings( array( 'courier_mode' => 'smart' ) );
+	list( $st, $r ) = rar_call( 'create_order', array( 'payload' => rar_payload( array( array( 'id' => $p2, 'qty' => 1 ) ), array( 'shipping' => 77 ) ) ) );
+	$oo = 200 === $st ? wc_get_order( $r['data']['order']['id'] ) : null;
+	$created[] = $oo ? $oo->get_id() : 0;
+	rar_ok( $oo && 77.0 === (float) $oo->get_shipping_total() && 'manual' !== $oo->get_meta( '_rwsc_source' ), 'older app versions: typed shipping saved unchanged', "$st" );
+	$app = wp_remote_retrieve_body( wp_remote_get( RAR_WSO_Plugin::staff_url(), array( 'timeout' => 30, 'cookies' => $GLOBALS['rar_auth'] ) ) );
+	rar_ok( false !== strpos( $app, '"courierMode":"' . ( $sc_on ? 'smart' : 'basic' ) . '"' ), 'staff app knows the courier mode' );
+
 	echo "\nExports & tools (v1.4.0)\n";
 	rar_login( $admin );
 	$x = function ( $type, $extra = array() ) {

@@ -498,6 +498,14 @@ async function loadReport() {
    Shared rows
    ================================================================ */
 const pill = s => `<span class="pill ${stClass(s)}">${esc(stLabel(s))}</span>`;
+const safeColor = c => /^#[0-9a-f]{3,8}$/i.test(String(c || '')) ? c : '#64748b';
+/* Courier line of an order: name, shipment status, tracking and delivery estimate (Smart Courier). */
+function courierKv(o) {
+    const k = o.courier; if (!k) return '';
+    const trk = k.tracking ? (k.tracking_url ? ` · <a href="${esc(k.tracking_url)}" target="_blank" rel="noopener" class="mono">${esc(k.tracking)} ↗</a>` : ` · <span class="mono sel-all">${esc(k.tracking)}</span>`) : '';
+    const sub = [k.status_label, k.edd ? 'পৌঁছাবে ' + k.edd : (k.eta || ''), k.source].filter(Boolean).map(esc).join(' · ');
+    return `<div><dt>Courier</dt><dd><span class="o-cour" style="--cc:${esc(safeColor(k.color))}">${esc(k.name)}</span>${trk}${sub ? `<br><small class="muted-sm">${sub}</small>` : ''}</dd></div>`;
+}
 function statusCtl(o, ro) {
     if (ro || !MANAGER) return pill(o.status);
     const CHG = STATUSES.filter(s => !C.changeStatuses || C.changeStatuses.includes(s));
@@ -510,7 +518,7 @@ function orderRow(o, opt = {}) {
     return `<div class="orow" data-oid="${o.id}">
         <button type="button" class="o-main" data-open-order="${o.id}">
             <span class="o-l1"><span class="mono o-id">#${esc(o.number)}</span><span class="o-name">${esc(o.name)}</span>${o.channel === 'Staff app' ? '<span class="tag">Staff</span>' : ''}</span>
-            <span class="o-l2">${when(o.time * 1000)} · ${o.items} item${o.items === 1 ? '' : 's'}${area ? ' · ' + esc(area) : ''}${wait}</span>
+            <span class="o-l2">${when(o.time * 1000)} · ${o.items} item${o.items === 1 ? '' : 's'}${area ? ' · ' + esc(area) : ''}${o.courier ? ` · <span class="o-cour" style="--cc:${esc(safeColor(o.courier.color))}">${esc(o.courier.name)}</span>` : ''}${wait}</span>
         </button>
         <div class="o-amt"><b>${esc(money(o.total))}</b><small>${esc(o.payment || '')}</small></div>
         <div class="o-st">${statusCtl(o, opt.ro)}</div>
@@ -741,6 +749,7 @@ function orderView(id) {
                 <div><dt>Email</dt><dd>${o.email ? `<span class="sel-all">${esc(o.email)}</span>` : '—'}</dd></div>
                 <div><dt>Address</dt><dd>${esc(o.address || '—')}</dd></div>
                 <div><dt>Town / City · District</dt><dd>${esc([o.city, o.district].filter(Boolean).join(', ') || '—')}</dd></div>
+                ${courierKv(o)}
             </dl></div>
             <div class="dcard"><h4>Items</h4><div class="tbl-wrap"><table class="itbl">
                 <thead><tr><th>Sl</th><th>Product</th><th class="r">Qty × Rate</th><th class="r">Amount</th></tr></thead>
@@ -748,7 +757,7 @@ function orderView(id) {
                 <tfoot><tr><td colspan="3">Items subtotal</td><td class="r">${esc(money(o.subtotal))}</td></tr>
                 ${o.discount ? `<tr><td colspan="3">Discount</td><td class="r">−${esc(money(o.discount))}</td></tr>` : ''}
                 ${o.fees ? `<tr><td colspan="3">Fees</td><td class="r">${esc(money(o.fees))}</td></tr>` : ''}
-                <tr><td colspan="3">Shipping</td><td class="r">${esc(money(o.shipping))}</td></tr>
+                <tr><td colspan="3">Delivery${o.courier ? ' · ' + esc(o.courier.name) : ''}</td><td class="r">${esc(money(o.shipping))}</td></tr>
                 ${o.tax ? `<tr><td colspan="3">Tax</td><td class="r">${esc(money(o.tax))}</td></tr>` : ''}
                 <tr class="tot"><td colspan="3">Total</td><td class="r">${esc(money(o.total))}</td></tr>
                 <tr class="words"><td colspan="4">${esc(inWords(o.total))}</td></tr></tfoot>
@@ -848,7 +857,7 @@ function slipPaint(x, o, D) {
     row('Items subtotal', money(o.subtotal));
     if (o.discount) row('Discount', '−' + money(o.discount));
     if (o.fees) row('Fees', money(o.fees));
-    row('Shipping', money(o.shipping));
+    row(o.courier ? fit('Delivery · ' + o.courier.name, 500, 24, 300) : 'Delivery', money(o.shipping));
     if (o.tax) row('Tax', money(o.tax));
     box(lx - 22, y - 10, cAmt - lx + 44, 66, '#e6f4ef', 12);
     t('Total', lx, y + 34, 800, 28, INK); t(money(o.total), cAmt, y + 36, 800, 32, '#0a7f6a', 'right');
@@ -858,6 +867,7 @@ function slipPaint(x, o, D) {
     y += 12; hr(y); y += 46;
     t(`Payment: ${o.payment || '—'}`, PAD, y, 600, 22, INK2);
     t(`Source: ${o.channel || ''}`, R, y, 500, 22, MUT, 'right'); y += 34;
+    if (o.courier) { t(fit(`Courier: ${o.courier.name}${o.courier.tracking ? ' · ' + o.courier.tracking : ''}${o.courier.edd ? ' · Est. delivery ' + o.courier.edd : ''}`, 600, 22, W - 2 * PAD), PAD, y, 600, 22, INK2); y += 34; }
     if (o.note) wrap('Note: ' + o.note, 500, 22, W - 2 * PAD).forEach(l => { t(l, PAD, y, 500, 22, INK2); y += 30; });
     y += 26;
     const addr = C.slipAddress ? wrap(C.slipAddress, 500, 20, W - 2 * PAD) : [], FH = 100 + addr.length * 28;
@@ -869,7 +879,7 @@ function slipPaint(x, o, D) {
 }
 const slipCache = new Map();
 async function makeSlip(o) {
-    const key = o.id + '|' + o.status;
+    const key = o.id + '|' + o.status + '|' + (o.courier ? o.courier.name + '|' + o.courier.tracking : '');
     if (slipCache.has(key)) return slipCache.get(key);
     await slipLogoReady;
     await slipLoadImages(o);
@@ -900,7 +910,9 @@ function orderTextShort(o) {
     const L = [`*${C.business || 'Sales Order'}*`, `Sales Order #${o.number}`, `Date: ${dmy(o.time * 1000)}, ${hm(o.time * 1000)}`, `Customer: ${o.name}${o.phone ? ' (+88 ' + String(o.phone).replace(/^\+?88/, '') + ')' : ''}`, `Ship to: ${[o.address, o.city, o.district].filter(Boolean).join(', ')}`, ''];
     (o.lines || []).forEach((it, i) => L.push(`${i + 1}. ${it.name} × ${qtyFmt(it.qty)}`));
     const units = (o.lines || []).reduce((a, it) => a + Number(it.qty || 0), 0);
-    L.push('', `Item Total: ${pad2(units)} pcs`, '', `Payment: ${o.payment || '—'} · Status: ${stLabel(o.status)}`, 'Thank you');
+    L.push('', `Item Total: ${pad2(units)} pcs`, '');
+    if (o.courier) L.push(`Courier: ${o.courier.name}${o.courier.edd ? ' · Est. delivery ' + o.courier.edd : ''}`);
+    L.push(`Payment: ${o.payment || '—'} · Status: ${stLabel(o.status)}`, 'Thank you');
     return L.join('\n');
 }
 function orderText(o) {
@@ -910,7 +922,7 @@ function orderText(o) {
     L.push('', `Items subtotal: ${money(o.subtotal)}`);
     if (o.discount) L.push(`Discount: −${money(o.discount)}`);
     if (o.fees) L.push(`Fees: ${money(o.fees)}`);
-    L.push(`Shipping: ${money(o.shipping)}`);
+    L.push(`Delivery${o.courier ? ' (' + o.courier.name + ')' : ''}: ${money(o.shipping)}`);
     if (o.tax) L.push(`Tax: ${money(o.tax)}`);
     L.push(`*Total: ${money(o.total)}*`, `(${inWords(o.total)})`, '', `Payment: ${o.payment || '—'} · Status: ${stLabel(o.status)}`);
     if (C.slipFooter) L.push(C.slipFooter);
@@ -1204,10 +1216,11 @@ const shortProduct = p => esc(p.name);
 function createView() {
     const PAYS = C.payments || { cod:'Cash on delivery' };
     const payDefault = () => (C.payDefault && PAYS[C.payDefault]) ? C.payDefault : (Object.keys(PAYS)[0] || 'cod');
-    const blank = () => ({ name:'', phone:'', email:'', address:'', district:'', city:'', pay:payDefault(), discType:'amount', discount:'', ship:String(shipFor('', 0)), shipAuto:true, note:'', items:[] });
+    const blank = () => ({ name:'', phone:'', email:'', address:'', district:'', city:'', pay:payDefault(), discType:'amount', discount:'', ship:String(shipFor('', 0)), shipAuto:true, courier:'', note:'', items:[] });
     const v = { title:'Create Order', hue:'--c-sales', icon:'plus', f:blank(), touched:{}, tried:false, done:null, saving:false, reqId:'', serverError:'', opened:Date.now(),
         cb:{ district:{ q:'', open:false, active:-1, list:[] }, city:{ q:'', open:false, active:-1, list:[] } },
-        pk:{ open:false, q:'', items:[], page:1, pages:1, loading:false, req:0 }, customer:null, lookupReq:0 };
+        pk:{ open:false, q:'', items:[], page:1, pages:1, loading:false, req:0 }, customer:null, lookupReq:0,
+        sq:{ quote:null, sig:'', loading:false, error:'', req:0 } };
     const $b = s => E.body.querySelector(s);
     const FIELDS = ['name', 'phone', 'email', 'address', 'district', 'city', 'items'];
     /* Unsaved order draft is kept on this phone, so a call, a reload or a closed app doesn't lose it. */
@@ -1223,7 +1236,7 @@ function createView() {
     if (!PAYS[v.f.pay]) v.f.pay = payDefault(); // a payment method switched off since the draft was saved
     /* The request ID is kept until the order is saved or discarded: if a save timed out but reached
        the server, pressing Save again (even after edits or an app restart) returns that same order. */
-    const changed = () => { v.serverError = ''; draftSave(); };
+    const changed = () => { v.serverError = ''; draftSave(); sqWant(); };
     v.dirty = () => !v.done && !!(v.f.name || v.f.phone || v.f.address || v.f.items.length);
     v.dirtyMsg = () => 'Order এখনো save হয়নি — লেখা তথ্য মুছে যাবে';
     v.sub = () => v.done ? `Order #${v.done.number} saved · slip ready` : 'Phone, Facebook, WhatsApp বা walk-in order';
@@ -1258,15 +1271,91 @@ function createView() {
     };
     const updateTotals = () => {
         // Automatic shipping follows the district and the free-delivery amount as items change.
-        if (v.f.shipAuto) { const auto = String(shipFor(v.f.district, calc().sub)); if (auto !== v.f.ship) { v.f.ship = auto; const s = $b('#coShip'); if (s) s.value = auto; } }
+        if (v.f.shipAuto) { const auto = String(autoShip()); if (auto !== v.f.ship) { v.f.ship = auto; const s = $b('#coShip'); if (s) s.value = auto; } }
         const c = calc(), set = (s, txt) => { const n = $b(s); if (n) n.textContent = txt; };
         set('#tSub', money(c.sub)); set('#tDisc', (c.d ? '−' : '') + money(c.d)); set('#tShip', money(c.ship)); set('#tTot', money(c.tot)); set('#tWords', inWords(c.tot));
         const h = $b('#shipHint');
-        const free = freeOver() > 0 && c.sub >= freeOver();
-        if (h) h.innerHTML = v.f.shipAuto ? (free ? `Free delivery — items ${esc(money(freeOver()))}+ · প্রয়োজনে charge বসাতে পারবেন` : (v.f.district ? `Auto: ${shipLabel(v.f.district)} ${esc(money(shipFor(v.f.district, c.sub)))} — প্রয়োজনে বদলাতে পারবেন` : 'District দিলে shipping নিজে বসবে')) : `Manual shipping <button type="button" data-act="ship-auto">Auto-তে ফেরত নিন</button>`;
+        if (h) h.innerHTML = shipHintHtml(c);
         const tt = E.foot.querySelector('#coTotal'); if (tt) tt.textContent = money(c.tot);
         const n = E.foot.querySelector('#coCount'); if (n) n.textContent = c.units ? `${qtyFmt(c.units)} unit${c.units > 1 ? 's' : ''} · ${v.f.items.length} item${v.f.items.length > 1 ? 's' : ''}` : 'No items yet';
     };
+    /* ---- Delivery: courier quotes from the server (Smart Courier, zone free-shipping rule, standard rate) ---- */
+    const SMART = C.courierMode === 'smart';
+    const qItems = () => v.f.items.map(i => ({ id:i.pid, qty:i.qty, price:i.price }));
+    const discNum = () => parseFloat(fromBn(v.f.discount).replace(/[^\d.]/g, '') || '0') || 0;
+    const sqSig = () => JSON.stringify([v.f.district, v.f.city.trim(), v.f.address.trim().slice(0, 200), qItems(), v.f.discType, discNum()]);
+    const sqQuote = () => v.sq.quote; // last server answer (a newer one may be on its way)
+    /* Courier that will be saved: the one tapped, or Smart Courier's recommendation. */
+    const pickNow = () => {
+        const q = sqQuote(); if (!q || q.engine !== 'smart' || !q.quotes.length) return null;
+        return q.quotes.find(r => r.key === v.f.courier) || q.quotes.find(r => r.key === q.recommended) || q.quotes[0];
+    };
+    /* Automatic charge: chosen courier's price, else the standard / free rate from the server, else the offline estimate. */
+    const autoShip = () => {
+        if (!v.f.district) return shipFor('', 0);
+        const q = sqQuote(), p = pickNow();
+        if (p) return p.cost;
+        if (q) return q.basic;
+        return shipFor(v.f.district, calc().sub);
+    };
+    const shipHintHtml = c => {
+        if (!v.f.district) return 'District দিলে delivery charge নিজে বসবে';
+        const q = sqQuote(), p = pickNow(), wait = v.sq.loading ? ' <span class="spin sm" aria-hidden="true"></span>' : '';
+        if (!v.f.shipAuto) {
+            const ref = p ? ` · ${esc(p.name)}-এর charge ${esc(money(p.cost))}` : (q ? ` · auto ${esc(money(q.basic))}` : '');
+            return `Manual charge${ref} <button type="button" data-act="ship-auto">Auto-তে ফেরত নিন</button>`;
+        }
+        if (p) return `Auto: <b>${esc(p.name)}</b>${q.zone_label ? ' · ' + esc(q.zone_label) : ''}${p.free && q.free_reason ? ' · ' + esc(q.free_reason) : ''} — প্রয়োজনে বদলাতে পারবেন${wait}`;
+        if (q) return `${q.free ? esc(q.free_reason || 'Free delivery') : `Auto: ${esc(q.zone_label || shipLabel(v.f.district))} ${esc(money(q.basic))}`} — প্রয়োজনে বদলাতে পারবেন${wait}`;
+        const free = freeOver() > 0 && c.sub >= freeOver();
+        return (free ? `Free delivery — items ${esc(money(freeOver()))}+` : `Auto: ${shipLabel(v.f.district)} ${esc(money(shipFor(v.f.district, c.sub)))}`) + ` — প্রয়োজনে বদলাতে পারবেন${wait}`;
+    };
+    const courHtml = () => {
+        if (!SMART) return '';
+        const q = sqQuote();
+        if (!v.f.district) return `<div class="cour-empty">${ICON.truck}<span>District select করলে courier, charge আর delivery date দেখাবে</span></div>`;
+        if (!q && v.sq.loading) return `<div class="cour-empty"><span class="spin"></span><span>Courier rate আনছি…</span></div>`;
+        if (!q) return `<div class="cour-empty warn"><span>${esc(v.sq.error || 'Courier rate পাওয়া যায়নি')} — standard charge বসানো হয়েছে</span><button type="button" class="link-btn" data-act="sq-retry">আবার চেষ্টা</button></div>`;
+        if (q.engine !== 'smart') return `<div class="cour-empty warn"><span>${esc(q.notice || 'এই ঠিকানায় কোনো courier নেই')}</span></div>`;
+        const p = pickNow();
+        // "Fastest" / "Best price" only when one courier alone earns it (ties add noise on a phone).
+        const cnt = k => q.quotes.filter(r => r.badges.some(b => b.key === k)).length;
+        const showB = b => b.key === 'recommended' || cnt(b.key) === 1;
+        return `<div class="cour-h"><b>Courier</b><small>${esc(q.zone_label)}${q.weight ? ' · ' + esc(String(Math.round(q.weight * 100) / 100)) + ' kg' : ''}${v.sq.loading ? ' · <span class="spin sm" aria-hidden="true"></span> updating' : ''}</small></div>
+            <div class="cour-list" role="radiogroup" aria-label="Courier">${q.quotes.map(r => `<label class="cq${p && p.key === r.key ? ' on' : ''}" style="--cc:${esc(/^#[0-9a-f]{3,8}$/i.test(r.color) ? r.color : '#64748b')}">
+                <input type="radio" name="coCour" value="${esc(r.key)}"${p && p.key === r.key ? ' checked' : ''}>
+                <span class="cq-dot" aria-hidden="true"></span>
+                <span class="cq-main"><span class="cq-l1"><b>${esc(r.name)}</b>${r.badges.filter(showB).map(b => `<em class="cq-b cq-${esc(b.key)}">${esc(b.text)}</em>`).join('')}</span>
+                    <small title="${esc(r.eta || '')}">${r.edd_label ? `পৌঁছাবে ${esc(r.edd_label)}` : esc(r.eta || '')}</small></span>
+                <span class="cq-amt">${r.free ? `${r.normal > 0 ? `<del>${esc(money(r.normal))}</del>` : ''}<b>Free</b>` : `<b>${esc(money(r.cost))}</b>`}</span></label>`).join('')}</div>`;
+    };
+    const drawCour = () => { const box = $b('#coCour'); if (box) { box.innerHTML = courHtml(); box.hidden = !SMART; } };
+    let sqTimer = null;
+    const sqFetch = async () => {
+        clearTimeout(sqTimer); sqTimer = null;
+        if (!v.f.district) { v.sq.quote = null; v.sq.sig = ''; v.sq.loading = false; drawCour(); updateTotals(); return; }
+        const sig = sqSig(), my = ++v.sq.req;
+        v.sq.loading = true; drawCour(); updateTotals();
+        try {
+            const q = await api('ship_quote', { req:{ district:v.f.district, city:v.f.city.trim(), address:v.f.address.trim(), items:qItems(), discount_type:v.f.discType, discount:discNum() } });
+            if (my !== v.sq.req) return;
+            v.sq.quote = q; v.sq.error = '';
+        } catch (e) {
+            if (my !== v.sq.req) return;
+            v.sq.error = e.message; v.sq.quote = null;
+        }
+        v.sq.sig = sig; v.sq.loading = false;
+        drawCour(); updateTotals();
+    };
+    /* Ask again only when something that changes the price changed (address, items, rates, discount). */
+    function sqWant(delay = 450) {
+        if (v.done) return;
+        const sig = sqSig();
+        if (sig === v.sq.sig && !v.sq.error) { clearTimeout(sqTimer); sqTimer = null; return; }
+        clearTimeout(sqTimer); sqTimer = setTimeout(sqFetch, delay);
+    }
+    const sqReady = async () => { if (v.f.district && (v.sq.sig !== sqSig() || v.sq.loading || sqTimer)) await sqFetch(); };
+
     const phoneUI = () => {
         const d = v.f.phone, cnt = $b('#phCnt'), ret = $b('#retHint');
         if (cnt) { cnt.textContent = `${d.length}/11`; cnt.classList.toggle('ok', !phoneErr(d)); }
@@ -1307,8 +1396,8 @@ function createView() {
         const ci = $b('#coCity'), towns = townsFor(v.f.district);
         if (v.f.city && towns.length && !towns.includes(v.f.city) && !v.f.cityCustom) { v.f.city = ''; v.cb.city.q = ''; if (ci) ci.value = ''; }
         if (ci) { ci.disabled = !v.f.district; ci.placeholder = v.f.district ? `Search in ${v.f.district}…` : 'আগে District select করুন'; }
-        if (v.f.shipAuto) { v.f.ship = String(shipFor(v.f.district, calc().sub)); const s = $b('#coShip'); if (s) s.value = v.f.ship; }
-        updateTotals();
+        if (v.f.shipAuto) { v.f.ship = String(autoShip()); const s = $b('#coShip'); if (s) s.value = v.f.ship; }
+        sqWant(0); updateTotals();
     };
     const pickCombo = (k, val, fromCommit) => {
         const prev = v.f[k], c = v.cb[k];
@@ -1404,10 +1493,11 @@ function createView() {
                 <div class="picker"><div class="search">${ICON.search}<input type="search" id="coPk" placeholder="Search products — name or SKU" autocomplete="off" aria-controls="pkList" aria-expanded="false" value="${esc(v.pk.q)}"></div>
                     <div class="pk-panel" id="pkPanel" hidden><div class="pk-legend"><span><i class="dot lv-ok"></i>${THRESHOLD}+ in stock</span><span><i class="dot lv-low"></i>Low 1–${THRESHOLD}</span><span><i class="dot lv-out"></i>Stock out</span><button type="button" class="link-btn" data-act="pk-done">Done</button></div><div class="pk-list" id="pkList"></div></div></div>
                 <div id="coItems"></div><p class="msg" id="itemsMsg" hidden></p>
+                <div class="cour" id="coCour"${SMART ? '' : ' hidden'}></div>
                 <div class="totals">
                     <div class="tr"><span>Items subtotal</span><b id="tSub">${esc(money(0))}</b></div>
                     <div class="tr tr-in"><label for="coDisc">Discount${Number(C.maxDiscount ?? 100) < 100 ? ` <span class="opt">(max ${esc(String(C.maxDiscount))}%)</span>` : ''}</label><div class="inl"><div class="unit" role="group" aria-label="Discount type"><button type="button" data-act="dt" data-dt="amount" aria-pressed="${f.discType === 'amount'}">${esc(C.currency || '৳')}</button><button type="button" data-act="dt" data-dt="percent" aria-pressed="${f.discType === 'percent'}">%</button></div><input type="text" id="coDisc" inputmode="decimal" placeholder="0" value="${esc(f.discount)}"></div><b id="tDisc">${esc(money(0))}</b></div>
-                    <div class="tr tr-in"><label for="coShip">Shipping</label><div class="inl"><input type="text" id="coShip" inputmode="decimal" placeholder="0" value="${esc(f.ship)}"></div><b id="tShip">${esc(money(0))}</b></div>
+                    <div class="tr tr-in"><label for="coShip">Delivery</label><div class="inl"><input type="text" id="coShip" inputmode="decimal" placeholder="0" value="${esc(f.ship)}"></div><b id="tShip">${esc(money(0))}</b></div>
                     <p class="ship-hint" id="shipHint"></p>
                     <div class="tr tot"><span>Total</span><b id="tTot">${esc(money(0))}</b></div>
                     <div class="words"><span>In words</span><b id="tWords">Taka Zero Only</b></div>
@@ -1417,7 +1507,7 @@ function createView() {
                 <div class="paychips" role="radiogroup" aria-label="Payment method">${Object.entries(C.payments || { cod:'Cash on delivery' }).map(([k, l]) => `<label><input type="radio" name="coPay" id="pay-${esc(k)}" value="${esc(k)}"${k === f.pay ? ' checked' : ''}><span>${esc(l)}</span></label>`).join('')}</div>
                 <div class="fld"><label for="coNote">Order note <span class="opt">(optional)</span></label><textarea id="coNote" rows="2" placeholder="যেমন: বিকেল ৫টার পরে দিন">${esc(f.note)}</textarea></div>
             </section></form>`;
-        renderItems(); phoneUI(); pkDraw(); updateTotals();
+        renderItems(); phoneUI(); pkDraw(); drawCour(); updateTotals(); sqWant(0);
         FIELDS.forEach(k => { if (v.touched[k] || v.tried || (k === 'phone' && f.phone)) show(k); });
     };
     v.foot = ft => {
@@ -1447,10 +1537,14 @@ function createView() {
         }
         if (!v.reqId) v.reqId = newReqId();
         draftSave(true);
-        const payload = { request_id:v.reqId, name:f.name.trim(), phone:f.phone, email:f.email.trim(), address:f.address.trim(), city:f.city.trim(), district:f.district, note:f.note.trim(),
-            shipping:c.ship, discount_type:f.discType, discount:parseFloat(fromBn(f.discount).replace(/[^\d.]/g, '') || '0') || 0, payment:f.pay,
-            items:f.items.map(i => ({ id:i.pid, qty:i.qty, price:i.price })) };
         v.saving = true; v.serverError = ''; drawFoot();
+        // The charge on screen must be the one the server will save: wait for a pending courier price.
+        try { await sqReady(); } catch (_) { /* priced again by the server */ }
+        updateTotals();
+        const c2 = calc(), pk2 = pickNow();
+        const payload = { request_id:v.reqId, name:f.name.trim(), phone:f.phone, email:f.email.trim(), address:f.address.trim(), city:f.city.trim(), district:f.district, note:f.note.trim(),
+            shipping:c2.ship, ship_mode:f.shipAuto ? 'auto' : 'manual', courier:pk2 ? pk2.key : '', discount_type:f.discType, discount:discNum(), payment:f.pay,
+            items:f.items.map(i => ({ id:i.pid, qty:i.qty, price:i.price })) };
         try {
             const res = await api('create_order', { payload });
             v.done = res.order; v.duplicate = !!res.duplicate; v.reqId = ''; v.confirmClose = false; v.saving = false; clearTimeout(draftTimer); draftClear();
@@ -1458,7 +1552,17 @@ function createView() {
             toast(`Order <b>#${esc(res.order.number)}</b> ${res.duplicate ? 'আগেই save হয়েছিল' : 'saved'} · ${esc(money(res.order.total))} · slip ready`);
             loadStats();
         } catch (err) {
-            v.saving = false; v.serverError = err.message; drawBody(false); E.body.scrollTop = 0; fail(err);
+            v.saving = false;
+            if (err.data && err.data.reprice) {
+                // Price or courier changed on the server (settings, weight, free-delivery rule): show the new
+                // options and total, and let the staff member check before saving again.
+                if (err.data.quote) { v.sq.quote = err.data.quote; v.sq.sig = sqSig(); v.sq.error = ''; v.sq.loading = false; }
+                if (!pickNow()) v.f.courier = '';
+                v.f.shipAuto = true; v.serverError = err.message; drawBody(false); drawFoot();
+                const box = $b('#coCour') || $b('#coShip'); if (box) box.scrollIntoView({ block:'center', behavior:'smooth' });
+                toast(esc(err.message), { error:true, long:true }); return;
+            }
+            v.serverError = err.message; drawBody(false); E.body.scrollTop = 0; fail(err);
         }
     };
 
@@ -1493,7 +1597,15 @@ function createView() {
             updateTotals(); if (v.tried) show('items');
         }
     };
-    v.on_body_change = e => { if (e.target.name === 'coPay') { v.f.pay = e.target.value; changed(); } };
+    v.on_body_change = e => {
+        if (e.target.name === 'coPay') { v.f.pay = e.target.value; changed(); }
+        else if (e.target.name === 'coCour') {
+            // Picking a courier puts its price on the order (a typed charge is replaced).
+            v.f.courier = e.target.value; v.f.shipAuto = true; changed();
+            E.body.querySelectorAll('.cq').forEach(l => l.classList.toggle('on', l.contains(e.target)));
+            updateTotals();
+        }
+    };
     v.on_body_keydown = e => {
         const t = e.target;
         if (t.id === 'coDist' || t.id === 'coCity') {
@@ -1529,11 +1641,12 @@ function createView() {
         if (v.done && slipActions(e, v.done)) return;
         const a = e.target.closest('[data-act]'); if (!a) return;
         const act = a.dataset.act, row = a.closest('.it'), it = row ? product(+row.dataset.pid) : null;
-        if (act === 'draft-drop') { draftClear(); v.restored = 0; v.reqId = ''; v.f = blank(); v.touched = {}; v.tried = false; v.customer = null; drawView(true); return; }
+        if (act === 'draft-drop') { draftClear(); v.restored = 0; v.reqId = ''; v.sq = { quote:null, sig:'', loading:false, error:'', req:v.sq.req + 1 }; v.f = blank(); v.touched = {}; v.tried = false; v.customer = null; drawView(true); return; }
         if (act === 'pk-done') { v.pk.open = false; pkDraw(); }
         else if (act === 'pk-more') { v.pk.page++; pkFetch(false); }
         else if (act === 'dt') { v.f.discType = a.dataset.dt; E.body.querySelectorAll('[data-act="dt"]').forEach(x => x.setAttribute('aria-pressed', String(x === a))); changed(); updateTotals(); }
-        else if (act === 'ship-auto') { v.f.shipAuto = true; v.f.ship = String(shipFor(v.f.district, calc().sub)); const s = $b('#coShip'); if (s) s.value = v.f.ship; changed(); updateTotals(); }
+        else if (act === 'ship-auto') { v.f.shipAuto = true; v.f.ship = String(autoShip()); const s = $b('#coShip'); if (s) s.value = v.f.ship; changed(); updateTotals(); }
+        else if (act === 'sq-retry') { v.sq.sig = ''; sqFetch(); }
         else if (act === 'iinc') { if (it.max !== null && !it.backorders && it.qty >= it.max) { toast(`Stock-এ আছে মাত্র ${toBn(it.max)}টি`); return; } it.qty++; changed(); renderItems(); pkDraw(); updateTotals(); if (v.tried) show('items'); }
         else if (act === 'idec') { it.qty = Math.max(1, it.qty - 1); changed(); renderItems(); pkDraw(); updateTotals(); if (v.tried) show('items'); }
         else if (act === 'irm') { v.f.items = v.f.items.filter(i => i !== it); changed(); renderItems(); pkDraw(); updateTotals(); if (v.tried) show('items'); }
@@ -1541,7 +1654,7 @@ function createView() {
             const c = v.customer, dist = DISTRICTS.find(d => norm(d.name) === norm(c.district));
             Object.assign(v.f, { name:c.name || v.f.name, email:c.email || v.f.email, address:c.address || v.f.address, district:dist ? dist.name : v.f.district, city:c.city || v.f.city });
             v.f.cityCustom = !townsFor(v.f.district).includes(v.f.city);
-            if (v.f.shipAuto) v.f.ship = String(shipFor(v.f.district, calc().sub));
+            if (v.f.shipAuto) v.f.ship = String(autoShip());
             ['name', 'email', 'address', 'district', 'city'].forEach(k2 => { v.touched[k2] = true; });
             changed(); drawBody(false); toast('আগের order থেকে তথ্য বসানো হয়েছে — মিলিয়ে নিন');
         }
@@ -1549,6 +1662,7 @@ function createView() {
         else if (act === 'again') {
             draftClear(); v.restored = 0; v.reqId = '';
             v.f = blank(); v.touched = {}; v.tried = false; v.done = null; v.duplicate = false; v.customer = null; v.pk = { open:false, q:'', items:[], page:1, pages:1, loading:false, req:0 };
+            v.sq = { quote:null, sig:'', loading:false, error:'', req:v.sq.req + 1 };
             drawView(true); setTimeout(() => { const n = $b('#coName'); if (n) n.focus(); }, 30);
         }
     };
