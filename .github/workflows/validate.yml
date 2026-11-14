@@ -105,7 +105,7 @@ jobs:
           php -l site/wp-content/mu-plugins/rar-ci-quiet.php
       - name: Enable core dumps
         run: |
-          sudo apt-get install -y -qq gdb >/dev/null
+          sudo apt-get update -qq && sudo apt-get install -y -qq gdb >/dev/null || echo "gdb unavailable"
           sudo sysctl -w kernel.core_pattern=/tmp/core.%p
           php -v; php -m | tr '\n' ' '; php -i | grep -i -E 'opcache.enable|opcache.jit' || true
       - name: Start web server
