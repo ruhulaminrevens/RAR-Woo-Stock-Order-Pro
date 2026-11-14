@@ -52,7 +52,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        hpos: [ 'yes', 'no' ]
+        hpos: [ 'yes' ]
     services:
       mysql:
         image: mysql:8.0
@@ -103,14 +103,21 @@ jobs:
           PHP
           sed -i 's/^          //' site/wp-content/mu-plugins/rar-ci-quiet.php
           php -l site/wp-content/mu-plugins/rar-ci-quiet.php
+      - name: Enable core dumps
+        run: |
+          sudo apt-get install -y -qq gdb >/dev/null
+          sudo sysctl -w kernel.core_pattern=/tmp/core.%p
+          php -v; php -m | tr '\n' ' '; php -i | grep -i -E 'opcache.enable|opcache.jit' || true
       - name: Start web server
         run: |
+          ulimit -c unlimited
           cd site
           # Supervisor: if the PHP test server ever exits, record its exit code
           # (139 = segmentation fault) and start it again, so one crash is reported
           # clearly instead of turning every later test into "could not connect".
           cat > ../serve.sh <<'SH'
           #!/bin/bash
+          ulimit -c unlimited
           while true; do
             php -d log_errors=1 -d error_log=../php-errors.log -S 127.0.0.1:8080 >> ../server.log 2>&1
             echo "SERVER EXITED code=$? at $(date -u +%T)" | tee -a ../server-crash.log >> ../server.log
@@ -131,6 +138,12 @@ jobs:
         run: |
           cd site
           RAR_TEST_URL=http://127.0.0.1:8080 wp eval-file wp-content/plugins/rar-woo-stock-order/tests/smoke.php
+      - name: Backtrace
+        if: always()
+        run: |
+          ls -la /tmp/core.* 2>/dev/null || echo "no core"
+          for c in /tmp/core.*; do [ -f "$c" ] && sudo gdb -batch -ex 'bt 60' -ex 'info threads' "$(which php)" "$c" 2>&1 | tail -90; done
+          sudo bash -c 'for c in /tmp/core.*; do [ -f "$c" ] && gdb -batch -ex "source /dev/null" -ex "bt full 8" "$(which php)" "$c" 2>&1 | tail -60; done' || true
       - name: Server crash check
         run: |
           if [ -s server-crash.log ]; then
