@@ -112,7 +112,10 @@ jobs:
           cat > ../serve.sh <<'SH'
           #!/bin/bash
           while true; do
-            php -d log_errors=1 -d error_log=../php-errors.log -S 127.0.0.1:8080 >> ../server.log 2>&1
+            # OPcache JIT off (PHP's production default): setup-php turns it on, and the PHP 8.2 / 8.3
+            # tracing JIT segfaults inside WooCommerce 11.x core code under this test load
+            # (plugin v1.4.1 crashed the same way), turning every later test into "connection refused".
+            php -d opcache.jit=disable -d opcache.jit_buffer_size=0 -d log_errors=1 -d error_log=../php-errors.log -S 127.0.0.1:8080 >> ../server.log 2>&1
             echo "SERVER EXITED code=$? at $(date -u +%T)" | tee -a ../server-crash.log >> ../server.log
             sleep 1
           done
