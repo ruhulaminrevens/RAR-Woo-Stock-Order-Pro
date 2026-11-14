@@ -1,4 +1,18 @@
-# RAR Woo Stock & Order v1.4.1
+# RAR Woo Stock & Order v1.5.0
+
+**Release date:** 2026-11-14
+
+- **Couriers in Create Order.** With RAR Woo Smart Courier active, staff pick a courier (price, delivery date, Recommended / Fastest / Best price) and its charge goes on the order. Staff can still type a charge.
+- **No more automatic courier on staff orders.** The chosen courier is saved as the shipping line and as the Smart Courier shipment (*Set by staff*); status changes and auto-send keep it.
+- **Server re-pricing.** Every save is priced again from the real items and address; a stale charge or unavailable courier is refused with fresh options.
+- **Free delivery** also follows the WooCommerce zone's *Free shipping* minimum (Settings → Shipping, on by default).
+- Courier on order lists, order detail, slip and WhatsApp; WooCommerce *Origin* shows "Web admin".
+
+**Download:** `rar-woo-stock-order.zip` (always latest) or `rar-woo-stock-order-v1.5.0.zip`. Upgrade: back up → Plugins → Upload → *Replace current with uploaded* → LiteSpeed *Purge All* → open `/staff/` on each phone once. Works best with RAR Woo Smart Courier 3.2.1.
+
+---
+
+## Previous release: v1.4.1
 
 **Release date:** 2026-10-18
 

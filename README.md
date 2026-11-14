@@ -2,14 +2,14 @@
 
 Mobile-first **WooCommerce stock manager and staff order entry app (PWA)** for teams that work mainly from their phones.
 
-![Version](https://img.shields.io/badge/version-1.4.1-15234a) ![WordPress](https://img.shields.io/badge/WordPress-6.3%2B-21759b) ![WooCommerce](https://img.shields.io/badge/WooCommerce-8.0%2B-7f54b3) ![PHP](https://img.shields.io/badge/PHP-7.4%2B-777bb4)
+![Version](https://img.shields.io/badge/version-1.5.0-15234a) ![WordPress](https://img.shields.io/badge/WordPress-6.3%2B-21759b) ![WooCommerce](https://img.shields.io/badge/WooCommerce-8.0%2B-7f54b3) ![PHP](https://img.shields.io/badge/PHP-7.4%2B-777bb4)
 
 ## ⬇️ Download
 
 | What | Direct link |
 |---|---|
 | **Plugin (always the latest)** | [rar-woo-stock-order.zip](https://github.com/ruhulaminrevens/RAR-Woo-Stock-Order-Pro/releases/latest/download/rar-woo-stock-order.zip) |
-| Plugin v1.4.1 | [rar-woo-stock-order-v1.4.1.zip](https://github.com/ruhulaminrevens/RAR-Woo-Stock-Order-Pro/raw/main/dist/rar-woo-stock-order-v1.4.1.zip) |
+| Plugin v1.5.0 | [rar-woo-stock-order-v1.5.0.zip](https://github.com/ruhulaminrevens/RAR-Woo-Stock-Order-Pro/raw/main/dist/rar-woo-stock-order-v1.5.0.zip) |
 | All versions & release notes | [Releases](https://github.com/ruhulaminrevens/RAR-Woo-Stock-Order-Pro/releases) |
 | **Staff app (phone)** | No app-store download: open `https://your-site.com/staff/` on the phone and tap **Install app** — or scan the QR poster from **WooCommerce → Stock & Order → QR code**. For nabiad.com: **https://www.nabiad.com/staff/** |
 
@@ -40,7 +40,15 @@ Mobile-first **WooCommerce stock manager and staff order entry app (PWA)** for t
 - Long-press the app icon for the **Create Order** and **Stock Manager** shortcuts (Android).
 - The site must be on **HTTPS**, otherwise the phone won't install the app.
 
-## What's new in v1.4.1: cleaner slip & short WhatsApp message
+## What's new in v1.5.0: real couriers in Create Order
+
+- **Courier picker** from RAR Woo Smart Courier: every enabled courier with its price for the zone and parcel weight, delivery date and *Recommended / Fastest / Best price* badge. Tapping a courier puts its charge on the order; staff can still type a different charge.
+- **Saved exactly as chosen.** The order gets the courier as its shipping line and as the Smart Courier shipment (*Set by staff*). Smart Courier no longer swaps in an automatic courier when the order reaches Processing, and auto-send uses the staff courier.
+- **Priced again on the server** from the real items and address. A stale or edited automatic charge, or a courier that no longer delivers, is refused with the fresh options — nothing wrong is ever saved.
+- **Free delivery** follows the WooCommerce zone's *Free shipping* minimum (optional) and the app's own *Free delivery from* amount.
+- Courier on the order list, order detail, sales slip and WhatsApp text. Settings → **Shipping** has the new options; Standard mode keeps the old Inside / Outside Dhaka charge.
+
+## v1.4.1: cleaner slip & short WhatsApp message
 
 - Product photos on the sales slip; shop address in the footer (never cut off).
 - WhatsApp message is short by default — items and quantities, total pcs, payment and status (prices are on the slip). Switch to *Detailed* in **Settings → Branding & slip**.
@@ -111,7 +119,7 @@ RAR-Woo-Stock-Order-Pro/
 ├── .github/workflows/validate.yml    ← automated checks (CI)
 ├── dist/
 │   ├── rar-woo-stock-order.zip        ← latest installable plugin
-│   └── rar-woo-stock-order-v1.4.1.zip ← this version
+│   └── rar-woo-stock-order-v1.5.0.zip ← this version
 ├── rar-woo-stock-order.php            ← plugin source code
 ├── includes/
 ├── assets/ (css, js, icons)

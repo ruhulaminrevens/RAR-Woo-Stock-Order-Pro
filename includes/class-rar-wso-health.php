@@ -99,6 +99,21 @@ class RAR_WSO_Health {
             RAR_WSO_Reports::hpos() ? __( 'High-Performance Order Storage (HPOS) — supported.', 'rar-woo-stock-order' ) : __( 'Legacy posts storage — supported.', 'rar-woo-stock-order' ),
             admin_url( 'admin.php?page=wc-settings&tab=advanced&section=features' ) );
 
+        $set_ship = admin_url( 'admin.php?page=rar-wso&tab=settings#rarx-sec-shipping' );
+        if ( 'basic' === ( $s['courier_mode'] ?? 'smart' ) ) {
+            $add( 'courier', 'app', 'info', __( 'Couriers in Create Order', 'rar-woo-stock-order' ), __( 'Standard Inside / Outside Dhaka charge (set in Shipping). Staff do not pick a courier.', 'rar-woo-stock-order' ), $set_ship );
+        } elseif ( RAR_WSO_Shipping::smart_available() ) {
+            $n = count( (array) RWSC_Settings::couriers( true ) );
+            $add( 'courier', 'app', $n ? 'ok' : 'warn', __( 'Couriers in Create Order', 'rar-woo-stock-order' ),
+                $n
+                    /* translators: %d number of couriers */
+                    ? sprintf( __( 'RAR Woo Smart Courier: %d courier(s) with prices and delivery dates. The courier staff pick is saved on the order.', 'rar-woo-stock-order' ), $n )
+                    : __( 'RAR Woo Smart Courier has no enabled courier — the standard charge is used.', 'rar-woo-stock-order' ),
+                admin_url( 'admin.php?page=' . ( class_exists( 'RWSC_Admin' ) && defined( 'RWSC_Admin::SETTINGS_SLUG' ) ? RWSC_Admin::SETTINGS_SLUG : 'rar-woo-smart-courier' ) ) );
+        } else {
+            $add( 'courier', 'app', 'warn', __( 'Couriers in Create Order', 'rar-woo-stock-order' ), __( 'RAR Woo Smart Courier is not active or is switched off, so staff only get the standard Inside / Outside Dhaka charge.', 'rar-woo-stock-order' ), $set_ship );
+        }
+
         /* ---------------- Security ---------------- */
         $risky = in_array( $reg['stored_role'], RAR_WSO_Security::protected_roles(), true );
         $add( 'default_role', 'security', $risky ? 'fail' : 'ok', __( 'Default role for new sign-ups', 'rar-woo-stock-order' ),

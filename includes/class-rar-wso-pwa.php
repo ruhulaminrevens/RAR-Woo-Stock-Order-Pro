@@ -458,6 +458,7 @@ self.addEventListener('fetch', e => {
             'payDefault'       => RAR_WSO_Ajax::default_payment(),
             'stockReasons'     => RAR_WSO_Plugin::stock_reasons(),
             'freeShipOver'     => (float) $settings['free_shipping_over'],
+            'courierMode'      => RAR_WSO_Shipping::smart_available() ? 'smart' : 'basic',
             'brand'            => RAR_WSO_Plugin::brand_color(),
             'logo'             => RAR_WSO_Plugin::logo_url( 'medium' ),
             'slipPhone'        => (string) $settings['slip_phone'],
