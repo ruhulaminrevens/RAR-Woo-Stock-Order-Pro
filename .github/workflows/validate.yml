@@ -52,7 +52,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        hpos: [ 'yes' ]
+        hpos: [ 'yes', 'no' ]
     services:
       mysql:
         image: mysql:8.0
