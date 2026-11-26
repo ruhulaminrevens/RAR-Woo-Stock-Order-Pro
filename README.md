@@ -2,7 +2,7 @@
 
 Mobile-first **WooCommerce stock manager and staff order entry app (PWA)** for teams that work mainly from their phones.
 
-![Version](https://img.shields.io/badge/version-1.5.0-15234a) ![WordPress](https://img.shields.io/badge/WordPress-6.3%2B-21759b) ![WooCommerce](https://img.shields.io/badge/WooCommerce-8.0%2B-7f54b3) ![PHP](https://img.shields.io/badge/PHP-7.4%2B-777bb4)
+![Version](https://img.shields.io/badge/version-1.6.0-15234a) ![WordPress](https://img.shields.io/badge/WordPress-6.3%2B-21759b) ![WooCommerce](https://img.shields.io/badge/WooCommerce-8.0%2B-7f54b3) ![PHP](https://img.shields.io/badge/PHP-7.4%2B-777bb4)
 
 ## ⬇️ Download
 
@@ -40,7 +40,16 @@ Mobile-first **WooCommerce stock manager and staff order entry app (PWA)** for t
 - Long-press the app icon for the **Create Order** and **Stock Manager** shortcuts (Android).
 - The site must be on **HTTPS**, otherwise the phone won't install the app.
 
-## What's new in v1.5.0: real couriers in Create Order
+## What's new in v1.6.0: reports, stock add, themes & access control
+
+- **Reports** (staff app → Reports, or the *Reports* button on the home screen). Daily, monthly or custom range; sales, stock or both; staff see their own numbers, managers can pick anyone. **Share or download** as **Excel** (summary, sales by day / person, products, payments, orders, stock movements, low & out of stock), **PDF** or a long **image** — shared straight to WhatsApp on a phone.
+- **Shop Manager can add stock.** In Stock Manager, type an amount in *+ add qty* and save — it is added on top of the quantity shown. **New product** creates a simple product (name, price, opening stock, optional SKU / category), logged in the stock log and audit trail.
+- **Dark / Light / System.** Each phone picks its own in the app's Settings (gear icon); the default comes from **Settings → App & theme**.
+- **App identity.** Short name for the home screen and an app icon picked from the media library; every icon size is generated automatically.
+- **Access control.** **Settings → Shop Manager access** switches each permission (manage stock, add products, create orders, change prices, manage orders, reports, export, see stock value) for all managers; the Staff tab has *Permissions* for a per-manager Allow / Deny. Staff reports / export can be switched off too.
+- **Search fix.** Stock Manager search now matches every word in any order (a long name like "Jean Paul Dupont (JPD) Scripture Aqueo" no longer returns 0) and falls back to the closest matches.
+
+## v1.5.0: real couriers in Create Order
 
 - **Courier picker** from RAR Woo Smart Courier: every enabled courier with its price for the zone and parcel weight, delivery date and *Recommended / Fastest / Best price* badge. Tapping a courier puts its charge on the order; staff can still type a different charge.
 - **Saved exactly as chosen.** The order gets the courier as its shipping line and as the Smart Courier shipment (*Set by staff*). Smart Courier no longer swaps in an automatic courier when the order reaches Processing, and auto-send uses the staff courier.
@@ -119,7 +128,7 @@ RAR-Woo-Stock-Order-Pro/
 ├── .github/workflows/validate.yml    ← automated checks (CI)
 ├── dist/
 │   ├── rar-woo-stock-order.zip        ← latest installable plugin
-│   └── rar-woo-stock-order-v1.5.0.zip ← this version
+│   └── rar-woo-stock-order-v1.6.0.zip ← this version
 ├── rar-woo-stock-order.php            ← plugin source code
 ├── includes/
 ├── assets/ (css, js, icons)

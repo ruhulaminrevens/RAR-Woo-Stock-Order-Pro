@@ -394,7 +394,7 @@ class RAR_WSO_Reports {
         return '' !== (string) $via ? ucwords( str_replace( array( '-', '_' ), ' ', $via ) ) : __( 'Other', 'rar-woo-stock-order' );
     }
 
-    private static function item_rows( $ids ) {
+    public static function item_rows( $ids ) {
         global $wpdb;
         $ids = array_filter( array_map( 'absint', (array) $ids ) );
         if ( ! $ids ) {
@@ -422,7 +422,7 @@ class RAR_WSO_Reports {
         return $rows;
     }
 
-    private static function items_sold( $ids ) {
+    public static function items_sold( $ids ) {
         $n = 0.0;
         foreach ( self::item_rows( $ids ) as $r ) {
             $n += (float) $r['qty'];
@@ -430,7 +430,7 @@ class RAR_WSO_Reports {
         return $n;
     }
 
-    private static function top_products( $ids, $limit ) {
+    public static function top_products( $ids, $limit ) {
         $map = array();
         foreach ( self::item_rows( $ids ) as $r ) {
             $key = (int) $r['vid'] ? (int) $r['vid'] : (int) $r['pid'];

@@ -29,6 +29,7 @@ class RAR_WSO_Admin {
         add_action( 'admin_post_rar_wso_add_staff', array( $this, 'add_staff' ) );
         add_action( 'admin_post_rar_wso_staff_action', array( $this, 'staff_action' ) );
         add_action( 'admin_post_rar_wso_staff_update', array( $this, 'staff_update' ) );
+        add_action( 'admin_post_rar_wso_manager_update', array( $this, 'manager_update' ) );
         add_action( 'admin_post_rar_wso_tool', array( $this, 'tool' ) );
         add_action( 'admin_post_rar_wso_export', array( $this, 'export' ) );
         add_action( 'wp_ajax_rar_wso_admin_live', array( $this, 'live' ) );
@@ -118,6 +119,8 @@ class RAR_WSO_Admin {
                     'offline'   => __( 'Could not refresh — check the connection.', 'rar-woo-stock-order' ),
                     'pickLogo'  => __( 'Choose a logo', 'rar-woo-stock-order' ),
                     'useLogo'   => __( 'Use this logo', 'rar-woo-stock-order' ),
+                    'pickIcon'  => __( 'Choose the app icon', 'rar-woo-stock-order' ),
+                    'useIcon'   => __( 'Use this icon', 'rar-woo-stock-order' ),
                     'noMatch'   => __( 'No staff match this search.', 'rar-woo-stock-order' ),
                     'tooLong'   => __( 'This link is too long for a QR code.', 'rar-woo-stock-order' ),
                 ),
@@ -187,7 +190,7 @@ class RAR_WSO_Admin {
         $out = RAR_WSO_Plugin::defaults();
 
         // General.
-        foreach ( array( 'enabled', 'allow_price_override', 'staff_view_orders', 'digest_enabled', 'admin_bar_link', 'dashboard_widget', 'order_column', 'follow_wc_free' ) as $k ) {
+        foreach ( array( 'enabled', 'allow_price_override', 'staff_view_orders', 'digest_enabled', 'admin_bar_link', 'dashboard_widget', 'order_column', 'follow_wc_free', 'staff_reports', 'staff_export', 'mgr_manage_stock', 'mgr_add_products', 'mgr_create_orders', 'mgr_adjust_price', 'mgr_manage_orders', 'mgr_reports', 'mgr_export', 'mgr_view_cost' ) as $k ) {
             $out[ $k ] = self::flag( $input, $k, $old, $form );
         }
         $out['staff_slug']           = sanitize_title( (string) $get( 'staff_slug' ) );
@@ -208,6 +211,14 @@ class RAR_WSO_Admin {
         $out['managers_add_staff']   = current_user_can( 'promote_users' ) ? self::flag( $input, 'managers_add_staff', $old, $form ) : $old['managers_add_staff'];
 
         $out['wa_message'] = 'detailed' === (string) $get( 'wa_message' ) ? 'detailed' : 'short';
+
+        // App identity & theme.
+        $short                  = sanitize_text_field( (string) $get( 'app_short_name' ) );
+        $out['app_short_name']  = function_exists( 'mb_substr' ) ? mb_substr( $short, 0, 24 ) : substr( $short, 0, 24 );
+        $icon                   = absint( $get( 'app_icon_id' ) );
+        $out['app_icon_id']     = ( $icon && wp_attachment_is_image( $icon ) ) ? (string) $icon : '0';
+        $theme                  = (string) $get( 'app_theme' );
+        $out['app_theme']       = in_array( $theme, array( 'light', 'dark' ), true ) ? $theme : 'system';
 
         // Branding.
         $color              = sanitize_hex_color( (string) $get( 'brand_color' ) );
@@ -535,6 +546,35 @@ class RAR_WSO_Admin {
         }
 
         RAR_WSO_Audit::add( 'staff_updated', $user->display_name . ( $summary ? ': ' . implode( ', ', $summary ) : ': all defaults' ), $user_id );
+        /* translators: %s name */
+        self::flash( 'success', sprintf( __( 'Saved %s\'s permissions. They apply the next time the app loads.', 'rar-woo-stock-order' ), $user->display_name ) );
+        $this->back( 'staff', 'rarx-staff-' . $user_id );
+    }
+
+    /** Personal Shop Manager permission overrides (Administrators only). */
+    public function manager_update() {
+        if ( ! current_user_can( 'manage_options' ) ) {
+            $this->deny( __( 'Only an Administrator can change Shop Manager access.', 'rar-woo-stock-order' ) );
+        }
+        $user_id = absint( $_POST['user_id'] ?? 0 );
+        check_admin_referer( 'rar_wso_manager_update_' . $user_id );
+        $user = get_userdata( $user_id );
+        if ( ! $user || ! in_array( 'shop_manager', (array) $user->roles, true ) || user_can( $user, 'manage_options' ) ) {
+            self::flash( 'error', __( 'Only Shop Manager accounts can be changed here.', 'rar-woo-stock-order' ) );
+            $this->back( 'staff' );
+        }
+        $posted  = isset( $_POST['perm'] ) && is_array( $_POST['perm'] ) ? wp_unslash( $_POST['perm'] ) : array();
+        $summary = array();
+        foreach ( RAR_WSO_Plugin::manager_perms() as $cap => $key ) {
+            $val = isset( $posted[ $key ] ) ? sanitize_key( $posted[ $key ] ) : '';
+            if ( in_array( $val, array( 'yes', 'no' ), true ) ) {
+                update_user_meta( $user_id, 'rar_wso_perm_' . $key, $val );
+                $summary[] = $key . ' ' . $val;
+            } else {
+                delete_user_meta( $user_id, 'rar_wso_perm_' . $key );
+            }
+        }
+        RAR_WSO_Audit::add( 'staff_updated', $user->display_name . ( $summary ? ': ' . implode( ', ', $summary ) : ': shop defaults' ), $user_id );
         /* translators: %s name */
         self::flash( 'success', sprintf( __( 'Saved %s\'s permissions. They apply the next time the app loads.', 'rar-woo-stock-order' ), $user->display_name ) );
         $this->back( 'staff', 'rarx-staff-' . $user_id );

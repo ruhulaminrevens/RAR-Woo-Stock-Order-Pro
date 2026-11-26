@@ -26,6 +26,8 @@ class RAR_WSO_Audit {
             'settings_import' => array( __( 'Settings imported', 'rar-woo-stock-order' ), 'warn' ),
             'settings_reset'  => array( __( 'Settings reset to defaults', 'rar-woo-stock-order' ), 'warn' ),
             'export'          => array( __( 'Data exported', 'rar-woo-stock-order' ), 'info' ),
+            'report_export'   => array( __( 'Report exported from the app', 'rar-woo-stock-order' ), 'info' ),
+            'product_added'   => array( __( 'Product added from the app', 'rar-woo-stock-order' ), 'good' ),
             'tool'            => array( __( 'Maintenance tool used', 'rar-woo-stock-order' ), 'info' ),
             'emergency'       => array( __( 'Emergency action', 'rar-woo-stock-order' ), 'bad' ),
             'digest'          => array( __( 'Daily summary email', 'rar-woo-stock-order' ), 'info' ),
