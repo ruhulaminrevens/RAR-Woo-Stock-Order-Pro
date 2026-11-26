@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.6.0 — 2026-11-26
+
+Reports, stock add, themes and access control.
+
+### Added
+- **Reports** (staff app, AJAX `rar_wso_report_data` / `rar_wso_report_file`, capability `rar_wso_reports`). Presets and custom range (max 366 days, shop timezone), sales / stock / both, per person (managers). Preview in the app; **Excel** (server-built `.xlsx` via `RAR_WSO_Xlsx`, CSV fallback without ZipArchive; formula-injection safe), **PDF** and **image** (drawn in the browser) with Web Share, download fallback. Exports are audited (`report_export`).
+- **Add stock for Shop Managers**: *+ add qty* field in Stock Manager (adds on top of the loaded quantity). **New product** (`rar_wso_product_add`, capability `rar_wso_add_products`): simple product, managed stock, SKU uniqueness check, double-submit guard, stock log + audit (`product_added`).
+- **Theme**: Light / Dark / System. Per-phone choice (localStorage) with default `app_theme`; applied before first paint. Settings screen in the app (gear) with Reload app (clears caches).
+- **App identity**: short name, app icon (`RAR_WSO_Branding`, GD-generated 192 / 512 / maskable / Apple icons, regenerated when the icon or brand colour changes). Manifest, service worker and Apple tags use them; *Reports* shortcut added to the manifest.
+- **Access control**: settings `mgr_*` per permission, `staff_reports`, `staff_export`; per-manager user-meta overrides (Staff tab → Permissions, `rar_wso_manager_update`). New capabilities `rar_wso_add_products`, `rar_wso_reports`, `rar_wso_export`, `rar_wso_view_cost`. Stock value / cost hidden without `rar_wso_view_cost`.
+
+### Fixed
+- Stock Manager search returned 0 for long names with brackets / typos: now word-based AND search (any order), loose fallback (at least half the words) with a note in the list.
+
+### Changed
+- `rar_wso_add_products` is no longer removed from managers / admins (still not granted to staff).
+- Version 1.6.0; service-worker cache key follows it.
+
+
 ## 1.5.0 — 2026-11-14
 
 Courier release, built against live nabiad.com screenshots (Create Order showed only the WooCommerce zone rate and Smart Courier then picked a courier by itself). Tested on WordPress 7.1.4 + WooCommerce 11.3.0 with RAR Woo Smart Courier 3.2.x: `tests/smoke.php` now runs 124 checks (22 new), and Create Order, the saved slip and order detail were checked in a browser at 412 px, light and dark.

@@ -5,7 +5,7 @@ Requires at least: 6.3
 Tested up to: 7.1
 Requires PHP: 7.4
 Requires Plugins: woocommerce
-Stable tag: 1.5.0
+Stable tag: 1.6.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -46,6 +46,9 @@ Features:
 
 == Upgrade Notice ==
 
+= 1.6.0 =
+New: Reports (daily / monthly / custom) as Excel, PDF and image; Shop Manager can add stock and new products; Dark / Light / System theme; app name, icon and per-manager access control (Settings > App & theme, Shop Manager access). Open /staff/ on each phone once.
+
 = 1.5.0 =
 Create Order shows RAR Woo Smart Courier couriers with price and delivery date; the chosen courier is saved on the order (no more automatic pick). Review Settings > Shipping, then open /staff/ on each phone once.
 
@@ -71,6 +74,14 @@ Take a backup, then upload the v1.2.0 ZIP and choose "Replace current with uploa
 If v1.0.0 was installed directly from a GitHub source archive and uses a versioned plugin folder, deactivate/delete the old plugin files first, then install the official v1.1.0 release ZIP. Settings and WooCommerce operational data are preserved.
 
 == Changelog ==
+
+= 1.6.0 =
+* Reports screen in the staff app: Today, Yesterday, 7 / 30 days, This month, Last month or a custom range; sales, stock or both; for one person or everyone. Share or download as Excel, PDF or image.
+* Shop Manager can add stock (type an amount to add) and create new simple products.
+* Theme: Light, Dark or System, chosen per phone (Settings in the app) with a default in Settings > App & theme.
+* App identity: short name and app icon (generated for every size) from the admin.
+* Access control: per-permission switches for all Shop Managers, plus per-manager Allow / Deny overrides in the Staff tab.
+* Fix: Stock Manager search with a long product name returned nothing; it now matches every word and falls back to the closest matches.
 
 = 1.5.0 =
 * Create Order: pick a courier from RAR Woo Smart Courier (price, delivery date, Recommended / Fastest / Best price). The delivery charge follows the courier, zone and parcel weight.

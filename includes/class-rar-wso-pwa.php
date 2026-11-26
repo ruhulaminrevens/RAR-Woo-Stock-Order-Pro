@@ -216,12 +216,13 @@ class RAR_WSO_PWA {
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="<?php echo esc_attr( self::short_name() ); ?>">
+<meta name="apple-mobile-web-app-title" content="<?php echo esc_attr( RAR_WSO_Plugin::app_short_name() ); ?>">
 <meta name="format-detection" content="telephone=no">
 <title><?php echo esc_html( $title ); ?></title>
 <link rel="manifest" href="<?php echo esc_url( self::manifest_url() ); ?>">
-<link rel="icon" type="image/png" sizes="192x192" href="<?php echo esc_url( self::icon_url( 'icon-192.png' ) ); ?>">
-<link rel="apple-touch-icon" href="<?php echo esc_url( self::icon_url( 'apple-touch-icon.png' ) ); ?>">
+<link rel="icon" type="image/png" sizes="192x192" href="<?php echo esc_url( RAR_WSO_Branding::icon( '192' ) ); ?>">
+<link rel="apple-touch-icon" href="<?php echo esc_url( RAR_WSO_Branding::icon( 'apple' ) ); ?>">
+<script data-no-optimize="1" data-no-defer="1" data-no-minify="1" data-cfasync="false" data-noptimize="1"<?php echo $this->nonce_attr(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>>(function(){var d=document.documentElement,def=<?php echo wp_json_encode( RAR_WSO_Plugin::app_theme() ); ?>,t=def;try{var s=localStorage.getItem('rar_wso_theme');if(s==='light'||s==='dark'||s==='system')t=s;}catch(e){}if(t==='light'||t==='dark')d.setAttribute('data-theme',t);else d.removeAttribute('data-theme');})();</script>
 <link rel="stylesheet" data-no-optimize="1" data-no-minify="1" data-noptimize="1" href="<?php echo esc_url( RAR_WSO_URL . 'assets/css/staff.css?ver=' . rawurlencode( RAR_WSO_VERSION ) ); ?>">
 <?php if ( '#15234a' !== RAR_WSO_Plugin::brand_color() ) : ?>
 <style>:root{--top:<?php echo esc_html( RAR_WSO_Plugin::brand_color() ); ?>}.mark{color:<?php echo esc_html( RAR_WSO_Plugin::brand_color() ); ?>}</style>
@@ -269,8 +270,8 @@ class RAR_WSO_PWA {
         echo wp_json_encode(
             array(
                 'id'               => $staff_path,
-                'name'             => $settings['dashboard_title'],
-                'short_name'       => self::short_name(),
+                'name'             => RAR_WSO_Plugin::app_name(),
+                'short_name'       => RAR_WSO_Plugin::app_short_name(),
                 'description'      => __( 'Stock and order app for shop staff.', 'rar-woo-stock-order' ),
                 'lang'             => str_replace( '_', '-', get_locale() ),
                 'dir'              => is_rtl() ? 'rtl' : 'ltr',
@@ -283,13 +284,14 @@ class RAR_WSO_PWA {
                 'theme_color'      => RAR_WSO_Plugin::brand_color(),
                 'categories'       => array( 'business', 'productivity' ),
                 'icons'            => array(
-                    array( 'src' => self::icon_url( 'icon-192.png' ), 'sizes' => '192x192', 'type' => 'image/png', 'purpose' => 'any' ),
-                    array( 'src' => self::icon_url( 'icon-512.png' ), 'sizes' => '512x512', 'type' => 'image/png', 'purpose' => 'any' ),
-                    array( 'src' => self::icon_url( 'maskable-512.png' ), 'sizes' => '512x512', 'type' => 'image/png', 'purpose' => 'maskable' ),
+                    array( 'src' => RAR_WSO_Branding::icon( '192' ), 'sizes' => '192x192', 'type' => 'image/png', 'purpose' => 'any' ),
+                    array( 'src' => RAR_WSO_Branding::icon( '512' ), 'sizes' => '512x512', 'type' => 'image/png', 'purpose' => 'any' ),
+                    array( 'src' => RAR_WSO_Branding::icon( 'maskable' ), 'sizes' => '512x512', 'type' => 'image/png', 'purpose' => 'maskable' ),
                 ),
                 'shortcuts'        => array(
-                    array( 'name' => 'Create Order', 'short_name' => 'New order', 'url' => $staff_url . '#create', 'icons' => array( array( 'src' => self::icon_url( 'icon-192.png' ), 'sizes' => '192x192', 'type' => 'image/png' ) ) ),
-                    array( 'name' => 'Stock Manager', 'short_name' => 'Stock', 'url' => $staff_url . '#stock', 'icons' => array( array( 'src' => self::icon_url( 'icon-192.png' ), 'sizes' => '192x192', 'type' => 'image/png' ) ) ),
+                    array( 'name' => 'Create Order', 'short_name' => 'New order', 'url' => $staff_url . '#create', 'icons' => array( array( 'src' => RAR_WSO_Branding::icon( '192' ), 'sizes' => '192x192', 'type' => 'image/png' ) ) ),
+                    array( 'name' => 'Stock Manager', 'short_name' => 'Stock', 'url' => $staff_url . '#stock', 'icons' => array( array( 'src' => RAR_WSO_Branding::icon( '192' ), 'sizes' => '192x192', 'type' => 'image/png' ) ) ),
+                    array( 'name' => 'Reports', 'short_name' => 'Reports', 'url' => $staff_url . '#reports', 'icons' => array( array( 'src' => RAR_WSO_Branding::icon( '192' ), 'sizes' => '192x192', 'type' => 'image/png' ) ) ),
                 ),
             ),
             JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
@@ -308,8 +310,8 @@ class RAR_WSO_PWA {
         $assets     = array(
             RAR_WSO_URL . 'assets/css/staff.css?ver=' . rawurlencode( RAR_WSO_VERSION ),
             RAR_WSO_URL . 'assets/js/staff.js?ver=' . rawurlencode( RAR_WSO_VERSION ),
-            self::icon_url( 'icon-192.png' ),
-            self::icon_url( 'apple-touch-icon.png' ),
+            RAR_WSO_Branding::icon( '192' ),
+            RAR_WSO_Branding::icon( 'apple' ),
             self::offline_url(),
         );
 
@@ -372,7 +374,7 @@ self.addEventListener('fetch', e => {
 <!doctype html>
 <html <?php language_attributes(); ?>>
 <head>
-        <?php $this->head_tags( $settings['dashboard_title'] ); ?>
+        <?php $this->head_tags( RAR_WSO_Plugin::app_name() ); ?>
 </head>
 <body class="rar-login-page">
 <div class="rar-login-card rar-offline">
@@ -443,6 +445,13 @@ self.addEventListener('fetch', e => {
             'districtList'     => $districts,
             'canStock'         => RAR_WSO_Plugin::can( 'rar_wso_manage_stock' ),
             'canOrder'         => RAR_WSO_Plugin::can( 'rar_wso_create_orders' ),
+            'canAddProduct'    => RAR_WSO_Plugin::can( 'rar_wso_add_products' ),
+            'canReports'       => RAR_WSO_Plugin::can( 'rar_wso_reports' ),
+            'canExport'        => RAR_WSO_Plugin::can( 'rar_wso_export' ),
+            'canCost'          => RAR_WSO_Plugin::can( 'rar_wso_view_cost' ),
+            'reportAll'        => RAR_WSO_Plugin::can_report_all(),
+            'appName'          => RAR_WSO_Plugin::app_name(),
+            'theme'            => RAR_WSO_Plugin::app_theme(),
             'canViewOrders'    => RAR_WSO_Plugin::can_view_orders(),
             'isManager'        => $manager,
             'allowPrice'       => 'yes' === $settings['allow_price_override'] && RAR_WSO_Plugin::can( 'rar_wso_adjust_price' ),
@@ -485,16 +494,19 @@ self.addEventListener('fetch', e => {
 <!doctype html>
 <html <?php language_attributes(); ?>>
 <head>
-<?php $this->head_tags( $settings['dashboard_title'] ); ?>
+<?php $this->head_tags( RAR_WSO_Plugin::app_name() ); ?>
 </head>
 <body class="<?php echo $manager ? 'rar-is-manager' : 'rar-is-staff'; ?>">
 <header class="topbar">
     <div class="wrap tb-in">
         <div class="brand">
             <span class="mark" aria-hidden="true"><?php echo self::mark_html(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in mark_html() ?></span>
-            <div><b><?php echo esc_html( $settings['dashboard_title'] ); ?></b><small><?php echo esc_html( $user->display_name ); ?> · <?php echo $manager ? esc_html__( 'Shop Manager', 'rar-woo-stock-order' ) : esc_html__( 'Staff', 'rar-woo-stock-order' ); ?></small></div>
+            <div><b><?php echo esc_html( RAR_WSO_Plugin::app_name() ); ?></b><small><?php echo esc_html( $user->display_name ); ?> · <?php echo $manager ? esc_html__( 'Shop Manager', 'rar-woo-stock-order' ) : esc_html__( 'Staff', 'rar-woo-stock-order' ); ?></small></div>
         </div>
-        <a class="tb-out" href="<?php echo esc_url( self::logout_url() ); ?>"><?php esc_html_e( 'Log out', 'rar-woo-stock-order' ); ?></a>
+        <div class="tb-acts">
+            <button type="button" class="tb-ico" data-open="appset" aria-label="<?php esc_attr_e( 'Settings and theme', 'rar-woo-stock-order' ); ?>"><?php echo $icon( '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></button>
+            <a class="tb-out" href="<?php echo esc_url( self::logout_url() ); ?>"><?php esc_html_e( 'Log out', 'rar-woo-stock-order' ); ?></a>
+        </div>
     </div>
 </header>
 
@@ -511,6 +523,9 @@ self.addEventListener('fetch', e => {
             <?php endif; ?>
             <?php if ( RAR_WSO_Plugin::can( 'rar_wso_manage_stock' ) ) : ?>
                 <button type="button" class="qa qa-stock" data-open="stockmgr"><span class="qa-ico"><?php echo $icon( '<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></span><span><b>Stock Manager</b><small>স্টক দেখুন ও আপডেট করুন</small></span></button>
+            <?php endif; ?>
+            <?php if ( RAR_WSO_Plugin::can( 'rar_wso_reports' ) ) : ?>
+                <button type="button" class="qa qa-report" data-open="reports"><span class="qa-ico"><?php echo $icon( '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></span><span><b>Reports</b><small>Daily · Monthly · Custom</small></span></button>
             <?php endif; ?>
         </div>
     </section>
@@ -602,7 +617,7 @@ self.addEventListener('fetch', e => {
 <!doctype html>
 <html <?php language_attributes(); ?>>
 <head>
-        <?php $this->head_tags( $settings['dashboard_title'] . ' — Login' ); ?>
+        <?php $this->head_tags( RAR_WSO_Plugin::app_name() . ' — Login' ); ?>
 </head>
 <body class="rar-login-page">
 <div class="rar-login-card">

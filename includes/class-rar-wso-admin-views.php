@@ -795,11 +795,39 @@ class RAR_WSO_Admin_Views {
                             <div class="rarx-cell rarx-actions">
                                 <?php if ( $manage ) : ?>
                                     <button type="button" class="rarx-btn sm" data-rarx-toggle="#rarx-manage-<?php echo (int) $u->ID; ?>" aria-expanded="false" aria-controls="rarx-manage-<?php echo (int) $u->ID; ?>"><?php self::i( 'edit', 15 ); ?><span><?php esc_html_e( 'Manage', 'rar-woo-stock-order' ); ?></span></button>
+                                <?php elseif ( ! $r['is_staff'] && current_user_can( 'manage_options' ) && in_array( 'shop_manager', (array) $u->roles, true ) ) : ?>
+                                    <button type="button" class="rarx-btn sm" data-rarx-toggle="#rarx-mgr-<?php echo (int) $u->ID; ?>" aria-expanded="false" aria-controls="rarx-mgr-<?php echo (int) $u->ID; ?>"><?php self::i( 'lock', 15 ); ?><span><?php esc_html_e( 'Permissions', 'rar-woo-stock-order' ); ?></span></button>
+                                    <a class="rarx-btn sm ghost" href="<?php echo esc_url( get_edit_user_link( $u->ID ) ); ?>"><?php esc_html_e( 'Edit in Users', 'rar-woo-stock-order' ); ?></a>
                                 <?php elseif ( ! $r['is_staff'] && current_user_can( 'edit_user', $u->ID ) ) : ?>
                                     <a class="rarx-btn sm ghost" href="<?php echo esc_url( get_edit_user_link( $u->ID ) ); ?>"><?php esc_html_e( 'Edit in Users', 'rar-woo-stock-order' ); ?></a>
                                 <?php endif; ?>
                             </div>
                         </div>
+                        <?php if ( ! $r['is_staff'] && current_user_can( 'manage_options' ) && in_array( 'shop_manager', (array) $u->roles, true ) ) : ?>
+                            <div class="rarx-manage" id="rarx-mgr-<?php echo (int) $u->ID; ?>" hidden>
+                                <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" class="rarx-manage-form">
+                                    <input type="hidden" name="action" value="rar_wso_manager_update">
+                                    <input type="hidden" name="user_id" value="<?php echo (int) $u->ID; ?>">
+                                    <?php wp_nonce_field( 'rar_wso_manager_update_' . $u->ID ); ?>
+                                    <p class="rarx-muted"><?php esc_html_e( 'Shop default follows Settings → Shop Manager access. Choose Allow or Deny to give this person something different.', 'rar-woo-stock-order' ); ?></p>
+                                    <div class="rarx-fields-2">
+                                        <?php foreach ( RAR_WSO_Plugin::manager_perm_labels() as $cap => $label ) :
+                                            $mkey = RAR_WSO_Plugin::manager_perms()[ $cap ];
+                                            $own  = (string) get_user_meta( $u->ID, 'rar_wso_perm_' . $mkey, true );
+                                            ?>
+                                            <label class="rarx-f"><span><?php echo esc_html( $label ); ?></span>
+                                                <select name="perm[<?php echo esc_attr( $mkey ); ?>]">
+                                                    <option value=""><?php /* translators: %s allowed/denied */ echo esc_html( sprintf( __( 'Shop default (%s)', 'rar-woo-stock-order' ), 'yes' === $s[ $mkey ] ? __( 'allowed', 'rar-woo-stock-order' ) : __( 'denied', 'rar-woo-stock-order' ) ) ); ?></option>
+                                                    <option value="yes" <?php selected( $own, 'yes' ); ?>><?php esc_html_e( 'Allow', 'rar-woo-stock-order' ); ?></option>
+                                                    <option value="no" <?php selected( $own, 'no' ); ?>><?php esc_html_e( 'Deny', 'rar-woo-stock-order' ); ?></option>
+                                                </select>
+                                            </label>
+                                        <?php endforeach; ?>
+                                    </div>
+                                    <div class="rarx-manage-foot"><button type="submit" class="rarx-btn primary"><?php self::i( 'check', 16 ); ?><span><?php esc_html_e( 'Save permissions', 'rar-woo-stock-order' ); ?></span></button><span class="rarx-muted"><?php esc_html_e( 'Applies the next time the app loads.', 'rar-woo-stock-order' ); ?></span></div>
+                                </form>
+                            </div>
+                        <?php endif; ?>
                         <?php if ( $manage ) : ?>
                             <div class="rarx-manage" id="rarx-manage-<?php echo (int) $u->ID; ?>" hidden>
                                 <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" class="rarx-manage-form">
@@ -1108,6 +1136,8 @@ class RAR_WSO_Admin_Views {
             'shipping' => array( __( 'Shipping', 'rar-woo-stock-order' ), 'truck' ),
             'stock'    => array( __( 'Stock', 'rar-woo-stock-order' ), 'box' ),
             'brand'    => array( __( 'Branding & slip', 'rar-woo-stock-order' ), 'palette' ),
+            'app'      => array( __( 'App identity & theme', 'rar-woo-stock-order' ), 'store' ),
+            'access'   => array( __( 'Shop Manager access', 'rar-woo-stock-order' ), 'lock' ),
             'security' => array( __( 'Access & security', 'rar-woo-stock-order' ), 'lock' ),
             'reports'  => array( __( 'Reports & integrations', 'rar-woo-stock-order' ), 'bell' ),
         );
@@ -1254,6 +1284,54 @@ class RAR_WSO_Admin_Views {
                             <p class="rarx-muted"><?php esc_html_e( 'Live preview', 'rar-woo-stock-order' ); ?></p>
                         </div>
                     </div>
+                </section>
+
+                <section class="rarx-card rarx-sec" id="rarx-sec-app">
+                    <h2><?php self::i( 'store', 18 ); ?> <?php esc_html_e( 'App identity & theme', 'rar-woo-stock-order' ); ?></h2>
+                    <?php
+                    self::field( __( 'Home-screen name', 'rar-woo-stock-order' ), __( 'The short label under the icon on the phone (up to 12 characters fits best). Empty = the App name from General. Phones that already installed the app keep the old label until it is installed again.', 'rar-woo-stock-order' ), self::inp( 'app_short_name', $s, 'text', 'maxlength="24" placeholder="' . esc_attr( RAR_WSO_Plugin::app_name() ) . '"' ), 'rarx-f-app_short_name' );
+                    $ic_url = '';
+                    if ( absint( $s['app_icon_id'] ) ) {
+                        $ic_url = wp_get_attachment_image_url( absint( $s['app_icon_id'] ), 'thumbnail' );
+                    }
+                    $ic  = '<div class="rarx-logo-pick"><input type="hidden" name="rar_wso_settings[app_icon_id]" value="' . esc_attr( $s['app_icon_id'] ) . '" data-rarx-icon-id>';
+                    $ic .= '<span class="rarx-logo-prev" data-rarx-icon-prev>' . ( $ic_url ? '<img src="' . esc_url( $ic_url ) . '" alt="">' : '<img src="' . esc_url( RAR_WSO_PWA::icon_url( 'icon-192.png' ) ) . '" alt="">' ) . '</span>';
+                    $ic .= current_user_can( 'upload_files' ) ? '<button type="button" class="rarx-btn sm" data-rarx-icon-pick>' . esc_html__( 'Choose icon', 'rar-woo-stock-order' ) . '</button> <button type="button" class="rarx-btn sm ghost" data-rarx-icon-clear' . ( $ic_url ? '' : ' hidden' ) . '>' . esc_html__( 'Use default icon', 'rar-woo-stock-order' ) . '</button>' : '<span class="rarx-muted">' . esc_html__( 'Needs permission to upload files.', 'rar-woo-stock-order' ) . '</span>';
+                    $ic .= '</div>';
+                    self::field( __( 'App icon', 'rar-woo-stock-order' ), __( 'Square PNG or JPG, at least 512 × 512. The plugin creates every size phones need (including the rounded Android shape). Reinstall the app on a phone to see a new icon.', 'rar-woo-stock-order' ), $ic );
+                    $themes = array( 'system' => __( 'Follow the phone (system)', 'rar-woo-stock-order' ), 'light' => __( 'Light', 'rar-woo-stock-order' ), 'dark' => __( 'Dark', 'rar-woo-stock-order' ) );
+                    $topts  = '';
+                    foreach ( $themes as $k => $label ) {
+                        $topts .= '<option value="' . esc_attr( $k ) . '"' . selected( $s['app_theme'], $k, false ) . '>' . esc_html( $label ) . '</option>';
+                    }
+                    self::field( __( 'Default theme', 'rar-woo-stock-order' ), __( 'What a phone shows until the person chooses Light, Dark or System in the app (Settings icon, top right). Each phone remembers its own choice.', 'rar-woo-stock-order' ), '<select id="rarx-f-app_theme" name="rar_wso_settings[app_theme]">' . $topts . '</select>', 'rarx-f-app_theme' );
+                    ?>
+                </section>
+
+                <section class="rarx-card rarx-sec" id="rarx-sec-access">
+                    <h2><?php self::i( 'lock', 18 ); ?> <?php esc_html_e( 'Shop Manager access', 'rar-woo-stock-order' ); ?></h2>
+                    <p class="rarx-muted" style="margin:0 0 12px"><?php esc_html_e( 'Choose what every Shop Manager can do in the app. Administrators are never limited. One person can be given a different setting in the Staff tab.', 'rar-woo-stock-order' ); ?></p>
+                    <?php
+                    $perm_help = array(
+                        'rar_wso_manage_stock'  => __( 'Stock Manager: set quantities, add stock (+1 / +5 / +10 / any amount) and see the movement log.', 'rar-woo-stock-order' ),
+                        'rar_wso_add_products'  => __( 'A "New product" form in the Stock Manager: name, price, SKU, category and opening stock (simple products).', 'rar-woo-stock-order' ),
+                        'rar_wso_create_orders' => '',
+                        'rar_wso_adjust_price'  => '',
+                        'rar_wso_manage_orders' => __( 'All Orders, Live Orders, status changes and the Sales & Growth cards. Without it the person works like staff.', 'rar-woo-stock-order' ),
+                        'rar_wso_reports'       => __( 'The Reports screen for any date range, for everyone or one person.', 'rar-woo-stock-order' ),
+                        'rar_wso_export'        => __( 'Excel, PDF and image export / share buttons in Reports.', 'rar-woo-stock-order' ),
+                        'rar_wso_view_cost'     => __( 'Stock value figures in Stock Manager and in reports.', 'rar-woo-stock-order' ),
+                    );
+                    foreach ( RAR_WSO_Plugin::manager_perm_labels() as $cap => $label ) {
+                        $key = RAR_WSO_Plugin::manager_perms()[ $cap ];
+                        self::field( $label, $perm_help[ $cap ] ?? '', self::sw( $key, __( 'Shop Managers can', 'rar-woo-stock-order' ), $s ) );
+                    }
+                    ?>
+                    <h3 style="margin:18px 0 6px;font-size:14px"><?php esc_html_e( 'Staff reports', 'rar-woo-stock-order' ); ?></h3>
+                    <?php
+                    self::field( __( 'Staff see their own report', 'rar-woo-stock-order' ), __( 'Staff get a Reports screen with only their own orders and stock changes.', 'rar-woo-stock-order' ), self::sw( 'staff_reports', __( 'Staff can open their own reports', 'rar-woo-stock-order' ), $s ) );
+                    self::field( __( 'Staff export', 'rar-woo-stock-order' ), __( 'Excel, PDF and image export of their own report.', 'rar-woo-stock-order' ), self::sw( 'staff_export', __( 'Staff can export / share their own reports', 'rar-woo-stock-order' ), $s ) );
+                    ?>
                 </section>
 
                 <section class="rarx-card rarx-sec" id="rarx-sec-security">

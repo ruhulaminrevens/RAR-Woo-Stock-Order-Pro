@@ -1,4 +1,4 @@
-/* RAR Woo Stock & Order — staff app v1.3.0 */
+/* RAR Woo Stock & Order — staff app v1.6.0 */
 (() => {
 'use strict';
 
@@ -1004,7 +1004,7 @@ function stockView(mode, preset) {
             const res = await api('stock_list', { level:v.levelParam(), search:v.q.trim(), category:v.cat || 0, sort:v.sort, page:v.page, per_page:40, with_cats:mode === 'manager' && !v.cats ? 1 : 0 });
             if (my !== v.req) return;
             v.items = reset ? res.items : v.items.concat(res.items.filter(p => !v.find(p.id)));
-            v.total = res.total; v.pages = res.pages; v.counts = res.counts; v.error = '';
+            v.total = res.total; v.pages = res.pages; v.counts = res.counts; v.loose = !!res.loose; v.error = '';
             if (res.categories) { v.cats = res.categories; v.moves = res.moves_today || 0; if (isTop(v)) v.tools(E.tools, v); }
         } catch (e) { if (my !== v.req) return; v.error = e.message; }
         v.loading = false;
@@ -1027,7 +1027,7 @@ function stockView(mode, preset) {
         if (mode === 'all') return `${fmtNum(c.all, 0)} products · ${qtyFmt(c.units)} units · শুধু দেখার জন্য`;
         if (mode === 'live') return `${fmtNum(c.live, 0)} products · qty বদলে Save চাপুন`;
         if (mode === 'out') return `${fmtNum(c.out, 0)} products · stock যোগ করে Save চাপুন`;
-        return `${fmtNum(c.all, 0)} products · ${qtyFmt(c.units)} units · ${moneyShort(c.value)}`;
+        return `${fmtNum(c.all, 0)} products · ${qtyFmt(c.units)} units${C.canCost ? ' · ' + moneyShort(c.value) : ''}`;
     };
     v.tools = t => {
         let h = '';
@@ -1038,6 +1038,7 @@ function stockView(mode, preset) {
             <select id="ssort" aria-label="Sort"><option value="qty_asc">Stock: low → high</option><option value="qty_desc">Stock: high → low</option><option value="name">Name A–Z</option><option value="value">Stock value</option><option value="updated">Recently updated</option></select>`;
         }
         h += '</div>';
+        if (mode === 'manager' && v.tab === 'list' && C.canAddProduct) h += `<div class="t-add"><button type="button" class="btn" data-act="newprod">${ICON.plus}New product</button></div>`;
         if (v.chipKeys && v.tab === 'list') h += '<div class="chips" id="schips"></div>';
         t.innerHTML = h;
         const c = t.querySelector('#scat'); if (c) c.value = String(v.cat || 0);
@@ -1051,7 +1052,7 @@ function stockView(mode, preset) {
     };
     const statsStrip = () => {
         const c = v.counts; if (!c) return '';
-        return `<div class="sstrip"><div><span>Products</span><b>${fmtNum(c.all, 0)}</b></div><div><span>Units in hand</span><b>${qtyFmt(c.units)}</b></div><div><span>Value at sale price</span><b>${esc(moneyShort(c.value))}</b></div><div><span>Movements today</span><b>${fmtNum(v.moves, 0)}</b></div></div>`;
+        return `<div class="sstrip"><div><span>Products</span><b>${fmtNum(c.all, 0)}</b></div><div><span>Units in hand</span><b>${qtyFmt(c.units)}</b></div>${C.canCost ? `<div><span>Value at sale price</span><b>${esc(moneyShort(c.value))}</b></div>` : ''}<div><span>Movements today</span><b>${fmtNum(v.moves, 0)}</b></div></div>`;
     };
     v.body = b => {
         v.drawChips();
@@ -1059,7 +1060,8 @@ function stockView(mode, preset) {
         if (v.loading && !v.items.length) { b.innerHTML = (mode === 'manager' ? statsStrip() : '') + loadingHtml(); return; }
         if (v.error && !v.items.length) { b.innerHTML = errorHtml(v.error); return; }
         const more = v.page < v.pages ? `<button type="button" class="btn more" data-act="more"${v.loading ? ' disabled' : ''}>${v.loading ? '<span class="spin"></span>Loading…' : `Show more · ${fmtNum(v.total - v.items.length, 0)} left`}</button>` : '';
-        b.innerHTML = (mode === 'manager' ? statsStrip() : '') + (v.items.length ? v.items.map(p => stockRow(p, v)).join('') + more
+        const note = v.loose && v.items.length ? `<p class="loose-note">পুরো নামের সাথে হুবহু মেলেনি — সবচেয়ে কাছের product দেখানো হচ্ছে।</p>` : '';
+        b.innerHTML = (mode === 'manager' ? statsStrip() : '') + note + (v.items.length ? v.items.map(p => stockRow(p, v)).join('') + more
             : `<div class="empty"><b>${mode === 'out' && !v.q ? 'কোনো product stock out নেই' : 'কিছু পাওয়া যায়নি'}</b>${v.q ? 'অন্য নাম বা SKU দিয়ে খুঁজুন' : ''}</div>`);
     };
     const drawLog = b => {
@@ -1141,6 +1143,16 @@ function stockView(mode, preset) {
         else if (act === 'save') commitOne(p);
     };
     v.on_body_input = e => {
+        const ai = e.target.closest('input[data-act="addqty"]');
+        if (ai) {
+            const p = v.find(+ai.closest('.srow').dataset.pid); if (!p) return;
+            const raw = fromBn(ai.value).replace(/\D/g, '').slice(0, 7);
+            if (raw !== ai.value) ai.value = raw;
+            if (raw === '') { v.staged.delete(p.id); v.origin.delete(p.id); patchStockRow(v, p); drawFoot(); return; }
+            // "Add" is always on top of the quantity the phone loaded (typing 5 then 50 adds 50, not 55).
+            stage(p, (p.stock_qty === '' ? 0 : Number(p.stock_qty)) + parseInt(raw, 10), false);
+            return;
+        }
         const inp = e.target.closest('input[data-act="qty"]'); if (!inp) return;
         const p = v.find(+inp.closest('.srow').dataset.pid), raw = fromBn(inp.value).replace(/\D/g, '');
         if (raw !== inp.value) inp.value = raw;
@@ -1149,7 +1161,7 @@ function stockView(mode, preset) {
     };
     v.on_body_focusout = e => { const inp = e.target.closest('input[data-act="qty"]'); if (inp && inp.value === '') { const p = v.find(+inp.closest('.srow').dataset.pid); inp.value = v.shown(p); } };
     v.on_body_keydown = e => {
-        const inp = e.target.closest('input[data-act="qty"]'); if (!inp || e.key !== 'Enter') return;
+        const inp = e.target.closest('input[data-act="qty"],input[data-act="addqty"]'); if (!inp || e.key !== 'Enter') return;
         e.preventDefault(); const p = v.find(+inp.closest('.srow').dataset.pid);
         if (mode === 'manager') inp.blur(); else commitOne(p);
     };
@@ -1157,6 +1169,7 @@ function stockView(mode, preset) {
     v.on_tools_input = e => { if (e.target.type === 'search') { v.q = e.target.value; clearTimeout(timer); timer = setTimeout(() => v.fetch(true), 320); } };
     v.on_tools_change = e => { if (e.target.id === 'scat') v.cat = +e.target.value; if (e.target.id === 'ssort') v.sort = e.target.value; if (e.target.id === 'scat' || e.target.id === 'ssort') v.fetch(true); };
     v.on_tools_click = e => {
+        if (e.target.closest('[data-act="newprod"]')) { openView(addProductView(v), true); return; }
         const c = e.target.closest('[data-lv]'); if (c && c.dataset.lv !== v.chip) { v.chip = c.dataset.lv; v.fetch(true); return; }
         const t = e.target.closest('[data-tab]'); if (t && t.dataset.tab !== v.tab) { v.tab = t.dataset.tab; v.q = ''; drawView(true); v.fetch(true); }
     };
@@ -1171,9 +1184,9 @@ function stockView(mode, preset) {
 }
 function deltaTxt(p, q) {
     const cur = p.stock_qty === '' ? null : Number(p.stock_qty);
-    if (q === '' || q === undefined) return cur === null ? 'not tracked yet' : cur < 0 ? 'oversold — recount' : `value ${esc(money(cur * p.price))}`;
+    if (q === '' || q === undefined) return cur === null ? 'not tracked yet' : cur < 0 ? 'oversold — recount' : (C.canCost ? `value ${esc(money(cur * p.price))}` : '');
     const d = q - (cur ?? 0);
-    if (cur !== null && d === 0) return cur < 0 ? 'oversold — recount' : `value ${esc(money(q * p.price))}`;
+    if (cur !== null && d === 0) return cur < 0 ? 'oversold — recount' : (C.canCost ? `value ${esc(money(q * p.price))}` : '');
     return `${cur === null ? 'not tracked' : qtyFmt(cur)} → ${qtyFmt(q)}<b class="${d >= 0 ? 'good' : 'bad'}">${d > 0 ? '+' : ''}${qtyFmt(d)}</b>`;
 }
 function stockRow(p, v) {
@@ -1184,7 +1197,8 @@ function stockRow(p, v) {
     return `<div class="srow lv-${lv}${changed ? ' changed' : ''}" data-pid="${p.id}">${img}
         <div class="s-main"><div class="s-name">${esc(p.name)}</div><div class="s-meta">${meta}</div></div>
         <div class="s-qty"><div class="stepper"><button type="button" data-act="dec" aria-label="Decrease ${esc(p.name)}">${ICON.minus}</button><input type="text" inputmode="numeric" id="q-${v.mode}-${p.id}" data-act="qty" value="${q === '' ? '' : q}" placeholder="—" aria-label="Quantity of ${esc(p.name)}"><button type="button" data-act="inc" aria-label="Increase ${esc(p.name)}">${ICON.plus}</button></div>
-            <span class="quick-add"><button type="button" data-act="add5">+5</button><button type="button" data-act="add10">+10</button></span></div>
+            <span class="quick-add"><button type="button" data-act="add5">+5</button><button type="button" data-act="add10">+10</button></span>
+            ${v.mode === 'manager' ? `<div class="s-add"><input type="text" inputmode="numeric" data-act="addqty" placeholder="+ add qty" aria-label="Add quantity to ${esc(p.name)}"><small>যোগ হবে</small></div>` : ''}</div>
         <div class="s-act"><span class="s-delta${changed ? '' : ' idle'}">${deltaTxt(p, q)}</span>
             <button type="button" class="btn btn-sm btn-ghost" data-act="reset"${changed ? '' : ' hidden'}>Reset</button>
             ${v.mode !== 'manager' ? `<button type="button" class="btn btn-sm btn-primary" data-act="save"${changed ? '' : ' hidden'}>${p.stock_qty === '' ? 'Set stock' : 'Save'}</button>` : ''}</div>
@@ -1196,6 +1210,7 @@ function patchStockRow(v, p, fromInput) {
     row.className = `srow lv-${lv}${changed ? ' changed' : ''}`;
     const pl = row.querySelector('.lvl'); pl.className = `lvl lv-${lv}`; pl.textContent = LVLABEL[lv];
     if (!fromInput) row.querySelector('input[data-act="qty"]').value = q === '' ? '' : q;
+    const ai = row.querySelector('input[data-act="addqty"]'); if (ai && (fromInput || !changed)) ai.value = '';
     const de = row.querySelector('.s-delta'); de.innerHTML = deltaTxt(p, q); de.classList.toggle('idle', !changed);
     row.querySelectorAll('[data-act="save"],[data-act="reset"]').forEach(b => { b.hidden = !changed; });
 }
@@ -1671,6 +1686,335 @@ function createView() {
 }
 
 /* ================================================================
+   v1.6.0 — Theme, Settings, Reports (Excel / PDF / image), New product
+   ================================================================ */
+const THEME_KEY = 'rar_wso_theme';
+function themePref() { try { const s = localStorage.getItem(THEME_KEY); if (s === 'light' || s === 'dark' || s === 'system') return s; } catch (_) {} return ['light', 'dark'].includes(C.theme) ? C.theme : 'system'; }
+function applyTheme(t) { const d = document.documentElement; if (t === 'light' || t === 'dark') d.setAttribute('data-theme', t); else d.removeAttribute('data-theme'); }
+function setTheme(t) { try { localStorage.setItem(THEME_KEY, t); } catch (_) {} applyTheme(t); }
+applyTheme(themePref());
+
+async function hardReload() {
+    try { const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r => r.update())); } catch (_) {}
+    try { const keys = await caches.keys(); await Promise.all(keys.map(k => caches.delete(k))); } catch (_) {}
+    location.reload();
+}
+
+function appSetView() {
+    const v = { title:'Settings', hue:'--c-allstock', icon:'sliders' };
+    v.sub = () => 'Theme, app info ও update';
+    v.body = b => {
+        const cur = themePref();
+        const opt = (k, label, cls) => `<button type="button" class="theme-opt" data-theme-set="${k}" aria-pressed="${cur === k}"><i class="${cls}"></i>${label}</button>`;
+        b.innerHTML = `<section class="set-card"><h4>Appearance</h4><p>Light, Dark বা ফোনের সেটিং অনুযায়ী (System)। এই ফোনে মনে রাখা হবে।</p>
+            <div class="themes">${opt('light', 'Light', 't-light')}${opt('dark', 'Dark', 't-dark')}${opt('system', 'System', 't-sys')}</div></section>
+            <section class="set-card"><h4>This app</h4><dl>
+                <dt>App</dt><dd>${esc(C.appName || '')}</dd>
+                <dt>Signed in as</dt><dd>${esc(C.userName || '')} · ${esc(C.roleLabel || '')}</dd>
+                <dt>Shop</dt><dd>${esc(C.business || '')}</dd>
+                <dt>Version</dt><dd>v${esc(C.version || '')}</dd></dl></section>
+            <section class="set-card"><h4>Update</h4><p>নতুন version না এলে বা কিছু ঠিকমতো না দেখালে চাপুন — সংরক্ষিত cache মুছে app আবার load হবে (login থাকবে)।</p>
+                <button type="button" class="btn" data-act="reload">${ICON.share}Reload app</button></section>`;
+    };
+    v.on_body_click = e => {
+        const t = e.target.closest('[data-theme-set]'); if (t) { setTheme(t.dataset.themeSet); v.body(E.body); return; }
+        const a = e.target.closest('[data-act="reload"]'); if (a) { a.disabled = true; hardReload(); }
+    };
+    return v;
+}
+
+/* ---------------- dates (shop timezone) ---------------- */
+const ymdOf = (y, m, d) => `${y}-${pad(m + 1)}-${pad(d)}`;
+const todayYmd = () => { const p = zp(Date.now()); return ymdOf(p.y, p.m, p.d); };
+const ymdAdd = (s, n) => { const [y, m, d] = s.split('-').map(Number); const t = new Date(Date.UTC(y, m - 1, d + n)); return ymdOf(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate()); };
+const ymdFull = s => { const [y, m, d] = s.split('-').map(Number); return `${MON[m - 1]} ${d}, ${y}`; };
+const ymdRange = (a, b) => a === b ? ymdFull(a) : `${ymdFull(a)} – ${ymdFull(b)}`;
+function presetRange(k) {
+    const t = todayYmd();
+    if (k === 'yesterday') { const y = ymdAdd(t, -1); return [y, y]; }
+    if (k === '7d') return [ymdAdd(t, -6), t];
+    if (k === '30d') return [ymdAdd(t, -29), t];
+    if (k === 'month') return [t.slice(0, 8) + '01', t];
+    if (k === 'lastmonth') { const last = ymdAdd(t.slice(0, 8) + '01', -1); return [last.slice(0, 8) + '01', last]; }
+    return [t, t];
+}
+
+/* ---------------- download / share ---------------- */
+async function shareOrSave(blob, name, type, title, mode) {
+    if (mode === 'share' && navigator.share) {
+        try {
+            const data = { files:[new File([blob], name, { type })], title };
+            if (navigator.canShare && !navigator.canShare(data)) throw new Error('no-file-share');
+            await navigator.share(data); return;
+        } catch (e) { if (e && e.name === 'AbortError') return; toast('এই browser-এ সরাসরি share হচ্ছে না — file download হচ্ছে'); }
+    }
+    const url = URL.createObjectURL(blob), a = document.createElement('a');
+    a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+async function fetchReportFile(v, fmt, retried) {
+    const body = new URLSearchParams({ action:'rar_wso_report_file', nonce:C.nonce, from:v.from, to:v.to, staff_id:String(v.staff || 0), sections:v.secs(), format:fmt });
+    let res;
+    try { res = await fetch(C.ajaxUrl, { method:'POST', credentials:'same-origin', cache:'no-store', headers:{ 'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8' }, body }); }
+    catch (_) { throw new Error(navigator.onLine === false ? 'No internet connection.' : 'Could not reach the server. Try again.'); }
+    if (res.status === 403 && !retried && await refreshNonce()) return fetchReportFile(v, fmt, true);
+    const ct = res.headers.get('Content-Type') || '';
+    if (!res.ok || ct.includes('application/json')) {
+        let msg = 'Export failed. Try again.';
+        try { const j = await res.json(); if (j && j.data && j.data.message) msg = j.data.message; } catch (_) {}
+        throw new Error(msg);
+    }
+    return { blob:await res.blob(), ext:ct.includes('csv') ? 'csv' : 'xlsx' };
+}
+
+/* ---------------- report image (canvas) and PDF ---------------- */
+function reportPaint(x, r, D) {
+    const W = 1080, PAD = 56, CW = W - 2 * PAD, INK = '#131b31', MUT = '#66718c', LINE = '#e0e5ee';
+    const BR = /^#[0-9a-f]{6}$/i.test(C.brand || '') ? C.brand : '#15234a';
+    const m = r.meta;
+    let y = 0;
+    const t = (s, X, Y, w, sz, col, al) => { if (!D) return; x.font = SLIP_FONT(w, sz); x.fillStyle = col; x.textAlign = al || 'left'; x.textBaseline = 'alphabetic'; x.fillText(String(s), X, Y); };
+    const rect = (X, Y, w, h, col, rad) => { if (!D) return; x.fillStyle = col; x.beginPath(); if (rad && x.roundRect) x.roundRect(X, Y, w, h, rad); else x.rect(X, Y, w, h); x.fill(); };
+    const fit = (s, w, sz, wt) => { s = String(s ?? ''); x.font = SLIP_FONT(wt || 500, sz); if (x.measureText(s).width <= w) return s; while (s.length > 1 && x.measureText(s + '…').width > w) s = s.slice(0, -1); return s + '…'; };
+    const money2 = v => money(v);
+    // header
+    rect(0, 0, W, 190, BR);
+    t(m.business, PAD, 78, 800, 40, '#fff');
+    t('Sales & Stock Report', PAD, 124, 600, 28, 'rgba(255,255,255,.85)');
+    t(`${ymdRange(m.from, m.to)}  ·  ${m.staff}`, PAD, 164, 500, 23, 'rgba(255,255,255,.75)');
+    y = 190 + 34;
+    const title = s => { y += 10; t(s, PAD, y + 30, 800, 31, INK); y += 52; };
+    const kpis = items => {
+        const cw = (CW - 16) / 2;
+        items.forEach((it, i) => {
+            const col = i % 2, X = PAD + col * (cw + 16);
+            if (col === 0 && i) y += 112;
+            rect(X, y, cw, 98, '#f2f4f9', 16);
+            t(it[0], X + 20, y + 34, 600, 21, MUT);
+            t(fit(it[1], cw - 40, 38, 800), X + 20, y + 76, 800, 38, it[2] || INK);
+        });
+        y += 112 + 12;
+    };
+    const table = (cols, rows, empty) => {
+        const total = cols.reduce((s, c) => s + c.w, 0);
+        const ws = cols.map(c => c.w / total * CW);
+        rect(PAD, y, CW, 46, '#eef1f7', 10);
+        let X = PAD;
+        cols.forEach((c, i) => { t(c.h, c.al === 'r' ? X + ws[i] - 12 : X + 12, y + 31, 700, 19, MUT, c.al === 'r' ? 'right' : 'left'); X += ws[i]; });
+        y += 46;
+        if (!rows.length) { t(empty || 'No data in this period', PAD + 12, y + 36, 500, 21, MUT); y += 54; return; }
+        rows.forEach(row => {
+            let X2 = PAD;
+            row.forEach((cell, i) => { const c = cols[i]; const txt = c.al === 'r' ? String(cell) : fit(cell, ws[i] - 24, 22, 500); t(txt, c.al === 'r' ? X2 + ws[i] - 12 : X2 + 12, y + 33, 500, 22, INK, c.al === 'r' ? 'right' : 'left'); X2 += ws[i]; });
+            if (D) { x.fillStyle = LINE; x.fillRect(PAD, y + 46, CW, 1.5); }
+            y += 47;
+        });
+        y += 12;
+    };
+    const bars = daily => {
+        const h = 170, mx = Math.max(1, ...daily.map(d => d.sales));
+        rect(PAD, y, CW, h + 50, '#f2f4f9', 14);
+        const n = daily.length, gap = n > 45 ? 1 : 3, bw = Math.max(2, (CW - 40 - gap * (n - 1)) / n);
+        daily.forEach((d, i) => { const bh = Math.max(d.sales > 0 ? 3 : 0, d.sales / mx * h); rect(PAD + 20 + i * (bw + gap), y + 16 + h - bh, bw, bh, '#0b8a73'); });
+        t(ymdLabel(daily[0].date), PAD + 20, y + h + 42, 500, 18, MUT); t(ymdLabel(daily[n - 1].date), PAD + CW - 20, y + h + 42, 500, 18, MUT, 'right');
+        t('Peak ' + moneyShort(mx), PAD + CW - 20, y + 30, 600, 18, MUT, 'right');
+        y += h + 50 + 22;
+    };
+    if (r.sales) {
+        const s = r.sales.summary;
+        title('Sales');
+        kpis([['Net sales', money2(s.sales), '#0b8a73'], ['Orders counted', fmtNum(s.sale_orders, 0)], ['Average order', money2(s.avg)], ['Items sold', qtyFmt(s.items)], ['Discount given', money2(s.discount)], ['Delivery charged', money2(s.shipping)], ['Completed / Cancelled', `${fmtNum(s.completed, 0)} / ${fmtNum(s.cancelled, 0)}`], ['Refunds', money2(s.refunds)]]);
+        if (r.sales.daily.length > 1) { title('Sales by day'); bars(r.sales.daily); }
+        if (r.sales.staff.length && !m.staff_id) { title('By person'); table([{ h:'Person', w:4 }, { h:'Orders', w:1.4, al:'r' }, { h:'Sales', w:2.4, al:'r' }, { h:'Avg', w:2, al:'r' }], r.sales.staff.map(p => [p.name, fmtNum(p.orders, 0), money2(p.sales), money2(p.avg)])); }
+        title('Top products'); table([{ h:'Product', w:5 }, { h:'Qty', w:1.2, al:'r' }, { h:'Sales', w:2.4, al:'r' }], r.sales.products.slice(0, 12).map(p => [p.name, qtyFmt(p.qty), money2(p.sales)]), 'No sales in this period');
+        if (r.sales.payments.length) { title('Payment methods'); table([{ h:'Method', w:4 }, { h:'Orders', w:1.4, al:'r' }, { h:'Sales', w:2.4, al:'r' }], r.sales.payments.map(p => [p.label, fmtNum(p.orders, 0), money2(p.sales)])); }
+    }
+    if (r.stock) {
+        const k = r.stock, sn = k.snapshot;
+        title('Stock');
+        const items = [['Products tracked', fmtNum(sn.products, 0)], ['Units in hand', qtyFmt(sn.units)]];
+        if (sn.value !== null && sn.value !== undefined) items.push(['Value at sale price', money2(sn.value)]);
+        items.push(['Low / Out of stock', `${fmtNum(sn.low, 0)} / ${fmtNum(sn.out, 0)}`], ['Added in period', '+' + qtyFmt(k.added), '#1e8a45'], ['Removed in period', '−' + qtyFmt(k.removed), '#d0343d'], ['Sold in period (orders)', qtyFmt(k.sold)]);
+        kpis(items);
+        if (k.people.length) { title('Stock changes by person'); table([{ h:'Person', w:4 }, { h:'Changes', w:1.4, al:'r' }, { h:'Added', w:1.4, al:'r' }, { h:'Removed', w:1.6, al:'r' }], k.people.map(p => [p.name, fmtNum(p.moves, 0), '+' + qtyFmt(p.added), '−' + qtyFmt(p.removed)])); }
+        if (k.out.length) { title('Out of stock'); table([{ h:'Product', w:6 }, { h:'Qty', w:1.2, al:'r' }], k.out.slice(0, 10).map(p => [p.name, p.qty === null ? '—' : qtyFmt(p.qty)])); }
+        if (k.low.length) { title('Low stock'); table([{ h:'Product', w:6 }, { h:'Qty', w:1.2, al:'r' }], k.low.slice(0, 10).map(p => [p.name, p.qty === null ? '—' : qtyFmt(p.qty)])); }
+    }
+    y += 6;
+    t(`Generated ${m.generated} · ${m.by}`, PAD, y + 20, 500, 19, MUT); y += 54;
+    return y;
+}
+async function makeReportCanvas(r) {
+    const c = document.createElement('canvas'), x = c.getContext('2d');
+    c.width = 1080; c.height = 10;
+    const h = Math.ceil(reportPaint(x, r, false));
+    c.width = 1080; c.height = h;
+    x.fillStyle = '#ffffff'; x.fillRect(0, 0, 1080, h);
+    reportPaint(x, r, true);
+    return c;
+}
+const canvasBlob = (c, type, q) => new Promise((res, rej) => { try { c.toBlob(b => b ? res(b) : rej(new Error('Could not create the image.')), type, q); } catch (e) { rej(e); } });
+/* One JPEG image per A4 page, wrapped in a plain PDF (works for every language, no library). */
+async function canvasToPdf(c) {
+    const PW = 595.28, PH = 841.89, pxW = c.width, pagePx = Math.floor(pxW * PH / PW), pages = Math.max(1, Math.ceil(c.height / pagePx));
+    const enc = new TextEncoder(), chunks = [], offs = []; let len = 0;
+    const push = u => { chunks.push(u); len += u.length; }, pushS = s => push(enc.encode(s));
+    const jpgs = [];
+    for (let i = 0; i < pages; i++) {
+        const pc = document.createElement('canvas'); pc.width = pxW; pc.height = pagePx;
+        const px = pc.getContext('2d'); px.fillStyle = '#fff'; px.fillRect(0, 0, pxW, pagePx);
+        const sh = Math.min(pagePx, c.height - i * pagePx);
+        px.drawImage(c, 0, i * pagePx, pxW, sh, 0, 0, pxW, sh);
+        jpgs.push(new Uint8Array(await (await canvasBlob(pc, 'image/jpeg', 0.92)).arrayBuffer()));
+    }
+    pushS('%PDF-1.4\n');
+    const obj = (n, body) => { offs[n] = len; pushS(`${n} 0 obj\n`); body(); pushS('\nendobj\n'); };
+    obj(1, () => pushS('<< /Type /Catalog /Pages 2 0 R >>'));
+    obj(2, () => pushS(`<< /Type /Pages /Count ${pages} /Kids [${Array.from({ length:pages }, (_, i) => `${3 + i * 3} 0 R`).join(' ')}] >>`));
+    for (let i = 0; i < pages; i++) {
+        const pg = 3 + i * 3, ct = pg + 1, im = pg + 2, cs = `q ${PW} 0 0 ${PH} 0 0 cm /Im0 Do Q`;
+        obj(pg, () => pushS(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PW} ${PH}] /Resources << /XObject << /Im0 ${im} 0 R >> >> /Contents ${ct} 0 R >>`));
+        obj(ct, () => pushS(`<< /Length ${cs.length} >>\nstream\n${cs}\nendstream`));
+        obj(im, () => { pushS(`<< /Type /XObject /Subtype /Image /Width ${pxW} /Height ${pagePx} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpgs[i].length} >>\nstream\n`); push(jpgs[i]); pushS('\nendstream'); });
+    }
+    const n = 3 + pages * 3, xref = len;
+    pushS(`xref\n0 ${n}\n0000000000 65535 f \n`);
+    for (let i = 1; i < n; i++) pushS(String(offs[i]).padStart(10, '0') + ' 00000 n \n');
+    pushS(`trailer\n<< /Size ${n} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
+    return new Blob(chunks, { type:'application/pdf' });
+}
+
+/* ---------------- Reports screen ---------------- */
+function reportsView() {
+    const [f0, t0] = presetRange('today');
+    const v = { title:'Reports', hue:'--c-sales', icon:'chart', preset:'today', from:f0, to:t0, staff:C.reportAll ? 0 : Number(C.userId || 0), sec:'both', data:null, people:null, loading:false, error:'', req:0, busy:'' };
+    v.secs = () => v.sec === 'sales' ? 'sales' : v.sec === 'stock' ? 'stock' : 'sales,stock';
+    v.sub = () => ymdRange(v.from, v.to) + (C.reportAll ? (v.staff ? ' · ' + ((v.people || []).find(p => p.id === v.staff) || {}).name : ' · Everyone') : ' · My report');
+    v.fetch = async () => {
+        const my = ++v.req; v.loading = true; v.error = ''; if (isTop(v)) drawBody(true);
+        try {
+            const res = await api('report_data', { from:v.from, to:v.to, staff_id:v.staff || 0, sections:v.secs(), with_people:C.reportAll && !v.people ? 1 : 0 });
+            if (my !== v.req) return;
+            v.data = res.report; if (res.people) { v.people = res.people; if (isTop(v)) v.tools(E.tools, v); }
+        } catch (e) { if (my !== v.req) return; v.error = e.message; v.data = null; }
+        v.loading = false; if (isTop(v)) { drawBody(false); }
+    };
+    v.tools = t => {
+        const P = [['today', 'Today'], ['yesterday', 'Yesterday'], ['7d', '7 days'], ['30d', '30 days'], ['month', 'This month'], ['lastmonth', 'Last month'], ['custom', 'Custom']];
+        let h = `<div class="rp-presets" role="group" aria-label="Period">${P.map(([k, l]) => `<button type="button" data-preset="${k}" aria-pressed="${v.preset === k}">${l}</button>`).join('')}</div>`;
+        if (v.preset === 'custom') h += `<div class="rp-row"><div><label for="rpFrom">From</label><input type="date" id="rpFrom" value="${v.from}" max="${todayYmd()}"></div><div><label for="rpTo">To</label><input type="date" id="rpTo" value="${v.to}" max="${todayYmd()}"></div></div>`;
+        if (C.reportAll) h += `<div class="rp-row one"><div><label for="rpWho">Report for</label><select id="rpWho"><option value="0">Everyone (staff + website)</option>${(v.people || []).map(p => `<option value="${p.id}"${p.id === v.staff ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div></div>`;
+        h += `<div class="rp-secs" role="group" aria-label="What to include"><button type="button" data-sec="both" aria-pressed="${v.sec === 'both'}">Sales + Stock</button><button type="button" data-sec="sales" aria-pressed="${v.sec === 'sales'}">Sales</button><button type="button" data-sec="stock" aria-pressed="${v.sec === 'stock'}">Stock</button></div>`;
+        t.innerHTML = h;
+    };
+    const kpi = (l, val, cls, wide) => `<div class="rp-kpi${wide ? ' wide' : ''}"><span>${esc(l)}</span><b${cls ? ` class="${cls}"` : ''}>${val}</b></div>`;
+    const tbl = (cols, rows) => `<table class="rp-tbl"><thead><tr>${cols.map(c => `<th${c[1] ? ' class="n"' : ''}>${esc(c[0])}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map((c, i) => `<td${cols[i][1] ? ' class="n"' : ''}>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+    v.body = b => {
+        if (v.loading && !v.data) { b.innerHTML = loadingHtml('Report তৈরি হচ্ছে…'); return; }
+        if (v.error) { b.innerHTML = errorHtml(v.error); return; }
+        const r = v.data; if (!r) { b.innerHTML = ''; return; }
+        const m = r.meta; let h = `<h3 class="rp-title">${esc(m.business)}</h3><p class="rp-sub">${esc(ymdRange(m.from, m.to))} · ${esc(m.staff)}</p>`;
+        if (r.sales) {
+            const s = r.sales.summary;
+            h += `<h4 class="rp-h">Sales</h4><div class="rp-kpis">${kpi('Net sales', esc(money(s.sales)), 'good', true)}${kpi('Orders counted', fmtNum(s.sale_orders, 0))}${kpi('Average order', esc(money(s.avg)))}${kpi('Items sold', qtyFmt(s.items))}${kpi('Discount given', esc(money(s.discount)))}${kpi('Delivery charged', esc(money(s.shipping)))}${kpi('Completed', fmtNum(s.completed, 0))}${kpi('Cancelled / returned', fmtNum(s.cancelled + s.returned, 0))}</div>`;
+            if (r.sales.daily.length > 1) { const mx = Math.max(1, ...r.sales.daily.map(d => d.sales)); h += `<h4 class="rp-h">Sales by day</h4><div class="rp-bars" role="img" aria-label="Sales by day">${r.sales.daily.map(d => `<i style="height:${Math.max(d.sales > 0 ? 4 : 0, d.sales / mx * 100)}%" title="${esc(ymdLabel(d.date) + ': ' + money(d.sales))}"></i>`).join('')}</div>`; }
+            if (r.sales.staff.length && !m.staff_id) h += `<h4 class="rp-h">By person</h4>` + tbl([['Person'], ['Orders', 1], ['Sales', 1]], r.sales.staff.map(p => [esc(p.name), fmtNum(p.orders, 0), esc(money(p.sales))]));
+            h += `<h4 class="rp-h">Top products</h4>` + (r.sales.products.length ? tbl([['Product'], ['Qty', 1], ['Sales', 1]], r.sales.products.slice(0, 10).map(p => [esc(p.name), qtyFmt(p.qty), esc(money(p.sales))])) : '<p class="rp-note">No sales in this period.</p>');
+            if (r.sales.payments.length) h += `<h4 class="rp-h">Payment methods</h4>` + tbl([['Method'], ['Orders', 1], ['Sales', 1]], r.sales.payments.map(p => [esc(p.label), fmtNum(p.orders, 0), esc(money(p.sales))]));
+        }
+        if (r.stock) {
+            const k = r.stock, sn = k.snapshot;
+            h += `<h4 class="rp-h">Stock</h4><div class="rp-kpis">${kpi('Products tracked', fmtNum(sn.products, 0))}${kpi('Units in hand', qtyFmt(sn.units))}${sn.value !== null && sn.value !== undefined ? kpi('Value at sale price', esc(money(sn.value)), '', true) : ''}${kpi('Low stock', fmtNum(sn.low, 0))}${kpi('Out of stock', fmtNum(sn.out, 0))}${kpi('Added (manual)', '+' + qtyFmt(k.added), 'good')}${kpi('Removed (manual)', '−' + qtyFmt(k.removed), 'bad')}${kpi('Sold (orders)', qtyFmt(k.sold), '', true)}</div>`;
+            if (k.people.length) h += `<h4 class="rp-h">Stock changes by person</h4>` + tbl([['Person'], ['Changes', 1], ['Added', 1], ['Removed', 1]], k.people.map(p => [esc(p.name), fmtNum(p.moves, 0), '+' + qtyFmt(p.added), '−' + qtyFmt(p.removed)]));
+            if (k.rows.length) h += `<h4 class="rp-h">Latest movements</h4>` + tbl([['Product'], ['Change', 1]], k.rows.slice(0, 12).map(x => [`${esc(x.product)}<br><small class="rp-note">${esc(x.time)} · ${esc(x.reason)}${x.user ? ' · ' + esc(x.user) : ''}</small>`, x.diff === null ? '—' : (x.diff > 0 ? '+' : '') + qtyFmt(x.diff)]));
+        }
+        h += `<p class="rp-note">Generated ${esc(m.generated)} · ${esc(m.by)}. Excel-এ সব order ও stock movement-এর পূর্ণ তালিকা থাকে।</p>`;
+        b.innerHTML = h;
+    };
+    v.foot = f => {
+        if (!C.canExport || !v.data) return false;
+        const btn = (fmt, mode, label, cls) => `<button type="button" class="btn ${cls}" data-act="export" data-fmt="${fmt}" data-mode="${mode}"${v.busy ? ' disabled' : ''}>${v.busy === fmt + mode ? '<span class="spin"></span>' : ''}${label}</button>`;
+        f.innerHTML = `<div class="rp-acts">${btn('xlsx', 'share', 'Share Excel', 'btn-primary')}${btn('pdf', 'share', 'Share PDF', 'btn-primary')}${btn('png', 'share', 'Share image', 'btn-primary')}</div><div class="rp-acts" style="margin-top:8px">${btn('xlsx', 'save', 'Excel ⬇', '')}${btn('pdf', 'save', 'PDF ⬇', '')}${btn('png', 'save', 'Image ⬇', '')}</div>`;
+        return true;
+    };
+    const load = () => { v.fetch(); };
+    v.on_tools_click = e => {
+        const p = e.target.closest('[data-preset]');
+        if (p) { v.preset = p.dataset.preset; if (v.preset !== 'custom') [v.from, v.to] = presetRange(v.preset); v.tools(E.tools, v); if (v.preset !== 'custom') load(); return; }
+        const s = e.target.closest('[data-sec]'); if (s && s.dataset.sec !== v.sec) { v.sec = s.dataset.sec; v.tools(E.tools, v); load(); }
+    };
+    v.on_tools_change = e => {
+        if (e.target.id === 'rpWho') { v.staff = +e.target.value; load(); return; }
+        if (e.target.id === 'rpFrom' || e.target.id === 'rpTo') {
+            const a = $('#rpFrom', E.tools), b = $('#rpTo', E.tools); if (!a || !b || !a.value || !b.value) return;
+            if (a.value > b.value) { toast('Start date শেষ তারিখের পরে হতে পারে না', { error:true }); return; }
+            v.from = a.value; v.to = b.value; load();
+        }
+    };
+    v.on_body_click = e => { if (e.target.closest('[data-act="retry"]')) load(); };
+    v.on_foot_click = async e => {
+        const a = e.target.closest('[data-act="export"]'); if (!a || v.busy || !v.data) return;
+        const fmt = a.dataset.fmt, mode = a.dataset.mode, base = `report-${v.from}_to_${v.to}`, title = `Report ${ymdRange(v.from, v.to)}`;
+        v.busy = fmt + mode; drawFoot();
+        try {
+            if (fmt === 'xlsx') {
+                const f = await fetchReportFile(v, 'xlsx');
+                await shareOrSave(f.blob, `${base}.${f.ext}`, f.ext === 'csv' ? 'text/csv' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', title, mode);
+            } else {
+                const c = await makeReportCanvas(v.data);
+                if (fmt === 'png') await shareOrSave(await canvasBlob(c, 'image/png'), `${base}.png`, 'image/png', title, mode);
+                else await shareOrSave(await canvasToPdf(c), `${base}.pdf`, 'application/pdf', title, mode);
+            }
+        } catch (err) { fail(err); }
+        v.busy = ''; drawFoot();
+    };
+    return v;
+}
+
+/* ---------------- New product (Shop Manager) ---------------- */
+function addProductView(parent) {
+    const v = { title:'New product', hue:'--c-live', icon:'plus', saving:false, f:{ name:'', sku:'', price:'', qty:'', cat:'0' } };
+    v.sub = () => 'নাম, দাম ও শুরুর stock দিন';
+    v.dirty = () => !!(v.f.name || v.f.price || v.f.qty) && !v.saved;
+    v.dirtyMsg = () => 'নতুন product এখনো save হয়নি';
+    v.body = b => {
+        const cats = (parent && parent.cats) || [];
+        b.innerHTML = `<section class="fsec"><h4>Product details</h4>
+            <div class="frow"><div class="fld"><label for="npName">Product name <span class="req">*</span></label><input type="text" id="npName" maxlength="200" autocomplete="off" value="${esc(v.f.name)}" placeholder="e.g. Jean Paul Dupont (JPD) Scripture Aqueous 100ml"></div></div>
+            <div class="frow two"><div class="fld"><label for="npPrice">Selling price <span class="req">*</span></label><input type="text" id="npPrice" inputmode="decimal" value="${esc(v.f.price)}" placeholder="0"></div>
+            <div class="fld"><label for="npQty">Opening stock <span class="req">*</span></label><input type="text" id="npQty" inputmode="numeric" value="${esc(v.f.qty)}" placeholder="0"></div></div>
+            <div class="frow two"><div class="fld"><label for="npSku">SKU <span class="opt">(optional)</span></label><input type="text" id="npSku" maxlength="60" autocomplete="off" value="${esc(v.f.sku)}"></div>
+            <div class="fld"><label for="npCat">Category <span class="opt">(optional)</span></label><select id="npCat"><option value="0">— none —</option>${cats.map(c => `<option value="${c.id}"${String(c.id) === v.f.cat ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div></div>
+            <p class="msg" id="npMsg" hidden></p>
+            <p class="rp-note">সহজ (simple) product তৈরি হবে এবং সঙ্গে সঙ্গে shop-এ live হবে। ছবি, বিবরণ বা variation যোগ করতে WooCommerce → Products ব্যবহার করুন।</p></section>`;
+    };
+    v.foot = f => { f.innerHTML = `<div class="savebar"><div class="sb-info"><b>New product</b></div><button type="button" class="btn btn-primary" data-act="np-save"${v.saving ? ' disabled' : ''}>${v.saving ? '<span class="spin"></span>' : ICON.ok}Add product</button></div>`; return true; };
+    const msg = t => { const m = $('#npMsg', E.body); if (m) { m.textContent = t || ''; m.hidden = !t; } };
+    v.on_body_input = e => {
+        const id = e.target.id;
+        if (id === 'npName') v.f.name = e.target.value; else if (id === 'npSku') v.f.sku = e.target.value;
+        else if (id === 'npPrice') { const c = fromBn(e.target.value).replace(/[^\d.]/g, ''); if (c !== e.target.value) e.target.value = c; v.f.price = c; }
+        else if (id === 'npQty') { const c = fromBn(e.target.value).replace(/\D/g, ''); if (c !== e.target.value) e.target.value = c; v.f.qty = c; }
+    };
+    v.on_body_change = e => { if (e.target.id === 'npCat') v.f.cat = e.target.value; };
+    v.on_foot_click = async e => {
+        if (!e.target.closest('[data-act="np-save"]') || v.saving) return;
+        if (!v.f.name.trim()) { msg('Product-এর নাম লিখুন'); return; }
+        if (v.f.price === '' || isNaN(Number(v.f.price))) { msg('Selling price দিন (0 বা তার বেশি)'); return; }
+        if (v.f.qty === '') { msg('শুরুর stock লিখুন (0 হলেও লিখুন)'); return; }
+        msg(''); v.saving = true; drawFoot();
+        try {
+            const res = await api('product_add', { name:v.f.name.trim(), sku:v.f.sku.trim(), price:v.f.price, qty:v.f.qty, category:v.f.cat });
+            v.saved = true; v.saving = false;
+            toast(`<b>${esc(shortName(res.product.name))}</b> যোগ হয়েছে · stock ${qtyFmt(res.product.stock_qty === '' ? 0 : res.product.stock_qty)}`);
+            goBack();
+            if (parent) { parent.q = res.product.name; parent.fetch(true); const t = top(); if (t === parent) parent.tools(E.tools, parent); }
+        } catch (err) { v.saving = false; drawFoot(); msg(err.message); }
+    };
+    return v;
+}
+
+/* ================================================================
    Routing from dashboard cards
    ================================================================ */
 function openKey(key) {
@@ -1688,6 +2032,8 @@ function openKey(key) {
         'att-low':() => stockView('live', 'low'),
         'stockmgr':() => stockView('manager'),
         'create':() => createView(),
+        'appset':() => appSetView(),
+        'reports':() => reportsView(),
         'm-all':() => ordersView({ key, title:'All Orders', hue:'--c-allorders', icon:'list', scope:'all', chips:['all', ...STATUSES], dateSel:true }),
         'm-live':() => ordersView({ key, title:'Live Orders', hue:'--c-liveorders', icon:'truck', scope:'all', group:'live', chips:['all', ...STATUSES.filter(s => LIVE.has(s))], oldestFirst:true }),
         'm-proc':() => ordersView({ key, title:'Processing Orders', hue:'--c-processing', icon:'clock', scope:'all', fixed:'processing', oldestFirst:true }),
@@ -1698,6 +2044,8 @@ function openKey(key) {
     if (!V[key]) return;
     if ((key.startsWith('k-') || key.startsWith('att-today')) && !canOrders) return;
     if ((key === 'create') && !C.canOrder) return;
+    if (key === 'reports' && !C.canReports) return;
+    if (key === 'stockmgr' && !C.canStock) return;
     openView(V[key]());
 }
 const MAIN = $('#rar-main');
@@ -1780,7 +2128,7 @@ if ('serviceWorker' in navigator && C.swUrl) {
 /* Home-screen shortcuts: /staff/#create and /staff/#stock */
 function openFromHash() {
     const h = (location.hash || '').replace('#', '');
-    const map = { create:'create', order:'create', stock:'stockmgr' };
+    const map = { create:'create', order:'create', stock:'stockmgr', reports:'reports' };
     if (!map[h]) return;
     const b = document.querySelector('[data-open="' + map[h] + '"]');
     if (b) setTimeout(() => b.click(), 60);

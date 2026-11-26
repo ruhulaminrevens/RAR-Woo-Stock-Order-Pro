@@ -772,6 +772,48 @@ try {
 	rar_ok( count( $checks ) >= 15 && $score >= 0 && $score <= 100, "health checks run ({$score}/100)" );
 	rar_ok( wp_next_scheduled( 'rar_wso_housekeeping' ) || ( do_action( 'admin_init' ) || wp_next_scheduled( 'rar_wso_housekeeping' ) ), 'daily housekeeping is scheduled' );
 
+	echo "\nReports, product add, access control (v1.6.0)\n";
+	$today = wp_date( 'Y-m-d' );
+	rar_login( $manager );
+	list( $st, $r ) = rar_call( 'report_data', array( 'from' => $today, 'to' => $today, 'sections' => 'sales,stock', 'with_people' => 1 ) );
+	rar_ok( 200 === $st && ! empty( $r['success'] ) && isset( $r['data']['report']['sales']['summary'], $r['data']['report']['stock']['snapshot'] ), 'manager gets a sales + stock report', "$st" );
+	list( $st, $r ) = rar_call( 'report_data', array( 'from' => '2020-01-01', 'to' => $today ) );
+	rar_ok( 200 === $st && ! empty( $r['data']['report']['meta']['days'] ) && $r['data']['report']['meta']['days'] <= 366, 'report range is capped at 366 days' );
+	$xl = wp_remote_post( $GLOBALS['rar_base'] . '/wp-admin/admin-ajax.php', array( 'body' => array( 'action' => 'rar_wso_report_file', 'nonce' => wp_create_nonce( 'rar_wso_nonce' ), 'from' => $today, 'to' => $today, 'format' => 'xlsx' ), 'cookies' => $GLOBALS['rar_auth'], 'timeout' => 60, 'sslverify' => false ) );
+	$xb = wp_remote_retrieve_body( $xl );
+	rar_ok( 200 === (int) wp_remote_retrieve_response_code( $xl ) && ( 'PK' === substr( $xb, 0, 2 ) || false !== strpos( (string) wp_remote_retrieve_header( $xl, 'content-type' ), 'csv' ) ), 'Excel (or CSV fallback) export downloads' );
+	list( $st, $r ) = rar_call( 'product_add', array( 'name' => 'RARTEST New Item', 'price' => '120', 'qty' => '7', 'sku' => 'RARTEST-SKU-1' ) );
+	$new_id = (int) ( $r['data']['product']['id'] ?? 0 );
+	if ( $new_id ) {
+		$extra_posts[] = $new_id;
+	}
+	rar_ok( 200 === $st && $new_id && 7 === rar_stock( $new_id ), 'manager adds a new product with opening stock', "$st" );
+	list( $st, $r ) = rar_call( 'product_add', array( 'name' => 'RARTEST New Item 2', 'price' => '120', 'qty' => '1', 'sku' => 'RARTEST-SKU-1' ) );
+	rar_ok( 200 !== $st || empty( $r['success'] ), 'duplicate SKU is refused' );
+	list( $st, $r ) = rar_call( 'product_add', array( 'name' => '', 'price' => '1', 'qty' => '1' ) );
+	rar_ok( 200 !== $st || empty( $r['success'] ), 'product needs a name' );
+	list( $st, $r ) = rar_call( 'stock_list', array( 'search' => 'rartest new item zz nomatch' ) );
+	rar_ok( 200 === $st, 'long multi-word search does not error' );
+	rar_login( $staff );
+	list( $st, $r ) = rar_call( 'product_add', array( 'name' => 'RARTEST Staff Item', 'price' => '1', 'qty' => '1' ) );
+	rar_ok( 403 === $st, 'staff cannot add products', "$st" );
+	rar_settings( array( 'mgr_add_products' => 'no' ) );
+	rar_login( $manager );
+	list( $st ) = rar_call( 'product_add', array( 'name' => 'RARTEST Blocked', 'price' => '1', 'qty' => '1' ) );
+	rar_ok( 403 === $st, 'manager blocked when "add products" is switched off', "$st" );
+	update_user_meta( $manager, 'rar_wso_perm_mgr_add_products', 'yes' );
+	list( $st ) = rar_call( 'product_add', array( 'name' => 'RARTEST Override', 'price' => '1', 'qty' => '1', 'sku' => 'RARTEST-SKU-2' ) );
+	rar_ok( 200 === $st, 'per-manager Allow overrides the global switch', "$st" );
+	delete_user_meta( $manager, 'rar_wso_perm_mgr_add_products' );
+	rar_settings( array( 'mgr_add_products' => 'yes', 'staff_reports' => 'no' ) );
+	rar_login( $staff );
+	list( $st ) = rar_call( 'report_data', array( 'from' => $today, 'to' => $today ) );
+	rar_ok( 403 === $st, 'staff report switched off', "$st" );
+	rar_settings( array( 'staff_reports' => 'yes' ) );
+	list( $st, $r ) = rar_call( 'report_data', array( 'from' => $today, 'to' => $today, 'staff_id' => $manager ) );
+	rar_ok( 200 === $st && (int) ( $r['data']['report']['meta']['staff_id'] ?? -1 ) === $staff, 'staff can only see their own report' );
+	rar_ok( 'dark' === RAR_WSO_Plugin::app_theme() || in_array( RAR_WSO_Plugin::app_theme(), array( 'system', 'light' ), true ), 'app theme is one of system / light / dark' );
+
 	echo "\nPWA endpoints\n";
 	rar_ok( false !== strpos( RAR_WSO_PWA::manifest_url(), 'rar_wso_manifest=1' ) && false !== strpos( RAR_WSO_PWA::sw_url(), 'rar_wso_sw=1' ), 'cache-safe manifest / service worker URLs' );
 	foreach ( array( 'icon-192.png', 'icon-512.png', 'maskable-512.png', 'apple-touch-icon.png' ) as $icon ) {

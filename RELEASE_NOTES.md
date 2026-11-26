@@ -1,4 +1,18 @@
-# RAR Woo Stock & Order v1.5.0
+# RAR Woo Stock & Order v1.6.0
+
+**Release date:** 2026-11-26
+
+- **Reports** — daily, monthly or custom; sales, stock or both; share / download as **Excel, PDF or image**.
+- **Shop Manager can add stock** and create **new products**.
+- **Dark / Light / System** theme (per phone) and a default in Settings.
+- **App name, icon** and **Shop Manager access control** (all managers or one by one).
+- **Search fix** for long product names in Stock Manager.
+
+**Download:** `rar-woo-stock-order.zip` (always latest) or `rar-woo-stock-order-v1.6.0.zip`. Upgrade: back up → Plugins → Upload → *Replace current with uploaded* → LiteSpeed *Purge All* → open `/staff/` on each phone once. Then check **Settings → Shop Manager access** and **App & theme**.
+
+---
+
+## Previous release: v1.5.0
 
 **Release date:** 2026-11-14
 

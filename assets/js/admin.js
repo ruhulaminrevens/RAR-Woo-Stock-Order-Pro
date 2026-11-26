@@ -435,5 +435,28 @@
             frame.open();
         });
         if (clear) clear.addEventListener('click', function () { if (idIn) idIn.value = '0'; showLogo(''); markDirty(); });
+
+        // App icon from the Media Library (separate from the logo).
+        var ipick = $('[data-rarx-icon-pick]'), iclear = $('[data-rarx-icon-clear]'), iid = $('[data-rarx-icon-id]'), iprev = $('[data-rarx-icon-prev]');
+        var iframe = null, iblank = iprev ? iprev.innerHTML : '';
+        var showIcon = function (url) {
+            if (iprev) iprev.innerHTML = url ? '<img src="' + url.replace(/"/g, '&quot;') + '" alt="">' : iblank;
+            if (iclear) iclear.hidden = !url;
+        };
+        if (ipick) ipick.addEventListener('click', function () {
+            if (!window.wp || !wp.media) return;
+            if (!iframe) {
+                iframe = wp.media({ title: T.pickIcon || 'Choose the app icon', button: { text: T.useIcon || 'Use this icon' }, library: { type: 'image' }, multiple: false });
+                iframe.on('select', function () {
+                    var a = iframe.state().get('selection').first().toJSON();
+                    var url = (a.sizes && (a.sizes.thumbnail || a.sizes.medium) ? (a.sizes.thumbnail || a.sizes.medium).url : a.url);
+                    if (iid) iid.value = a.id;
+                    showIcon(url);
+                    markDirty();
+                });
+            }
+            iframe.open();
+        });
+        if (iclear) iclear.addEventListener('click', function () { if (iid) iid.value = '0'; showIcon(''); markDirty(); });
     }
 })();

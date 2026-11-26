@@ -23,6 +23,9 @@ final class RAR_WSO_Plugin {
         require_once RAR_WSO_PATH . 'includes/class-rar-wso-digest.php';
         require_once RAR_WSO_PATH . 'includes/class-rar-wso-integrations.php';
         require_once RAR_WSO_PATH . 'includes/class-rar-wso-shipping.php';
+        require_once RAR_WSO_PATH . 'includes/class-rar-wso-xlsx.php';
+        require_once RAR_WSO_PATH . 'includes/class-rar-wso-report-builder.php';
+        require_once RAR_WSO_PATH . 'includes/class-rar-wso-branding.php';
         require_once RAR_WSO_PATH . 'includes/class-rar-wso-admin.php';
         require_once RAR_WSO_PATH . 'includes/class-rar-wso-ajax.php';
         require_once RAR_WSO_PATH . 'includes/class-rar-wso-pwa.php';
@@ -35,6 +38,7 @@ final class RAR_WSO_Plugin {
         RAR_WSO_Security::hooks();
         RAR_WSO_Digest::hooks();
         RAR_WSO_Integrations::hooks();
+        RAR_WSO_Branding::hooks();
 
         add_action( 'init', array( $this, 'maybe_upgrade' ), 5 );
         add_filter( 'plugin_action_links_' . plugin_basename( RAR_WSO_FILE ), array( $this, 'plugin_action_links' ) );
@@ -90,7 +94,74 @@ final class RAR_WSO_Plugin {
             'admin_bar_link'       => 'yes',
             'dashboard_widget'     => 'yes',
             'order_column'         => 'yes',
+            // v1.6.0 — app identity & appearance.
+            'app_short_name'       => '',
+            'app_icon_id'          => '0',
+            'app_theme'            => 'system',
+            // v1.6.0 — reports for staff.
+            'staff_reports'        => 'yes',
+            'staff_export'         => 'yes',
+            // v1.6.0 — Shop Manager access control (Administrators are never limited).
+            'mgr_manage_stock'     => 'yes',
+            'mgr_add_products'     => 'yes',
+            'mgr_create_orders'    => 'yes',
+            'mgr_adjust_price'     => 'yes',
+            'mgr_manage_orders'    => 'yes',
+            'mgr_reports'          => 'yes',
+            'mgr_export'           => 'yes',
+            'mgr_view_cost'        => 'yes',
         );
+    }
+
+    /** Logical app permission => Shop Manager setting key. */
+    public static function manager_perms() {
+        return array(
+            'rar_wso_manage_stock'  => 'mgr_manage_stock',
+            'rar_wso_add_products'  => 'mgr_add_products',
+            'rar_wso_create_orders' => 'mgr_create_orders',
+            'rar_wso_adjust_price'  => 'mgr_adjust_price',
+            'rar_wso_manage_orders' => 'mgr_manage_orders',
+            'rar_wso_reports'       => 'mgr_reports',
+            'rar_wso_export'        => 'mgr_export',
+            'rar_wso_view_cost'     => 'mgr_view_cost',
+        );
+    }
+
+    /** Labels for the Shop Manager permission matrix (admin) and the per-person panel. */
+    public static function manager_perm_labels() {
+        return array(
+            'rar_wso_manage_stock'  => __( 'Update and add stock', 'rar-woo-stock-order' ),
+            'rar_wso_add_products'  => __( 'Add new products from the app', 'rar-woo-stock-order' ),
+            'rar_wso_create_orders' => __( 'Create orders', 'rar-woo-stock-order' ),
+            'rar_wso_adjust_price'  => __( 'Change item rates while billing', 'rar-woo-stock-order' ),
+            'rar_wso_manage_orders' => __( 'Order control: all orders, status changes, sales & growth', 'rar-woo-stock-order' ),
+            'rar_wso_reports'       => __( 'Reports (daily, monthly, custom — all staff)', 'rar-woo-stock-order' ),
+            'rar_wso_export'        => __( 'Export / share reports (Excel, PDF, image)', 'rar-woo-stock-order' ),
+            'rar_wso_view_cost'     => __( 'See stock value and cost figures', 'rar-woo-stock-order' ),
+        );
+    }
+
+    /** App name shown on the phone (home-screen label, header, install prompt). */
+    public static function app_name() {
+        $s    = self::settings();
+        $name = trim( (string) $s['dashboard_title'] ); // Settings → General → App name
+        return '' !== $name ? $name : 'Stock & Order';
+    }
+
+    /** Short home-screen label (max 12 characters work best). */
+    public static function app_short_name() {
+        $s    = self::settings();
+        $name = trim( (string) $s['app_short_name'] );
+        if ( '' === $name ) {
+            $name = self::app_name();
+        }
+        return function_exists( 'mb_substr' ) ? mb_substr( $name, 0, 24 ) : substr( $name, 0, 24 );
+    }
+
+    /** system | light | dark — the default for phones that have not chosen their own. */
+    public static function app_theme() {
+        $s = self::settings();
+        return in_array( $s['app_theme'], array( 'light', 'dark' ), true ) ? $s['app_theme'] : 'system';
     }
 
     /**
@@ -268,19 +339,63 @@ final class RAR_WSO_Plugin {
             if ( ! $role ) {
                 continue;
             }
-            foreach ( array( 'rar_wso_access', 'rar_wso_manage_stock', 'rar_wso_create_orders', 'rar_wso_adjust_price', 'rar_wso_manage_orders' ) as $cap ) {
+            foreach ( array( 'rar_wso_access', 'rar_wso_manage_stock', 'rar_wso_create_orders', 'rar_wso_adjust_price', 'rar_wso_manage_orders', 'rar_wso_add_products', 'rar_wso_reports', 'rar_wso_export', 'rar_wso_view_cost' ) as $cap ) {
                 $role->add_cap( $cap );
             }
-            $role->remove_cap( 'rar_wso_add_products' );
             $role->remove_cap( 'rar_wso_delete_products' );
         }
     }
 
+    /**
+     * Does this person hold an app permission?
+     *
+     * - Administrators: always.
+     * - Shop Managers: the shop-wide "Shop Manager access" settings, unless a personal
+     *   override (Staff tab → Manage) says otherwise.
+     * - Staff: the Staff role's capabilities (blocked per person from the Staff tab);
+     *   reports and export follow the "Staff reports" settings.
+     */
     public static function can( $cap ) {
-        if ( current_user_can( 'manage_woocommerce' ) ) {
+        $uid = get_current_user_id();
+        if ( current_user_can( 'manage_options' ) ) {
             return true;
         }
-        return current_user_can( $cap ) && ! RAR_WSO_Security::is_paused( get_current_user_id() );
+        if ( current_user_can( 'manage_woocommerce' ) ) {
+            if ( 'rar_wso_access' === $cap ) {
+                return true;
+            }
+            $map = self::manager_perms();
+            if ( ! isset( $map[ $cap ] ) ) {
+                return true;
+            }
+            $own = $uid ? (string) get_user_meta( $uid, 'rar_wso_perm_' . $map[ $cap ], true ) : '';
+            if ( 'yes' === $own || 'no' === $own ) {
+                return 'yes' === $own;
+            }
+            $settings = self::settings();
+            return 'yes' === $settings[ $map[ $cap ] ];
+        }
+        if ( RAR_WSO_Security::is_paused( $uid ) ) {
+            return false;
+        }
+        // Staff: reports (own figures only), export, and never cost / product creation.
+        if ( in_array( $cap, array( 'rar_wso_reports', 'rar_wso_export' ), true ) ) {
+            if ( ! current_user_can( 'rar_wso_access' ) ) {
+                return false;
+            }
+            $key      = 'rar_wso_reports' === $cap ? 'staff_reports' : 'staff_export';
+            $settings = self::settings();
+            return 'yes' === $settings[ $key ];
+        }
+        if ( in_array( $cap, array( 'rar_wso_add_products', 'rar_wso_view_cost' ), true ) ) {
+            return false;
+        }
+        return current_user_can( $cap );
+    }
+
+    /** Reports of every person (Shop Manager level) rather than only the user's own. */
+    public static function can_report_all() {
+        return current_user_can( 'manage_woocommerce' ) && self::can( 'rar_wso_reports' );
     }
 
     /** Who may add / pause staff accounts from WooCommerce → Stock & Order. */

@@ -56,6 +56,9 @@ class RAR_WSO_Ajax {
             'create_order' => 'create_order',
             'customer'     => 'customer',
             'ship_quote'   => 'ship_quote',
+            'product_add'  => 'product_add',
+            'report_data'  => 'report_data',
+            'report_file'  => 'report_file',
         ) as $action => $method ) {
             add_action( 'wp_ajax_rar_wso_' . $action, array( $this, $method ) );
         }
@@ -259,12 +262,50 @@ class RAR_WSO_Ajax {
         return '1=1';
     }
 
-    private function filter_sql( $search, $category ) {
+    /**
+     * Search words: every word must be found in the product name, its parent's name or the SKU,
+     * in any order ("jpd scripture" finds "Jean Paul Dupont (JPD) Scripture Aqueous"). Brackets and
+     * punctuation are ignored. When nothing matches all the words, products matching at least
+     * half of them are listed (best match first) so a long copied name still finds the product.
+     */
+    public static function search_terms( $search ) {
+        $search = trim( wp_strip_all_tags( (string) $search ) );
+        $parts  = preg_split( '/[\s\p{P}\p{S}]+/u', function_exists( 'mb_strtolower' ) ? mb_strtolower( $search ) : strtolower( $search ), -1, PREG_SPLIT_NO_EMPTY );
+        $terms  = array();
+        foreach ( (array) $parts as $p ) {
+            if ( '' !== $p && ! in_array( $p, $terms, true ) ) {
+                $terms[] = $p;
+            }
+        }
+        return array_slice( $terms, 0, 12 );
+    }
+
+    private function term_sql( $term ) {
+        global $wpdb;
+        $like = '%' . $wpdb->esc_like( $term ) . '%';
+        return $wpdb->prepare( '(p.post_title LIKE %s OR l.sku LIKE %s OR pp.post_title LIKE %s)', $like, $like, $like );
+    }
+
+    /** @param bool $loose Match at least half of the words instead of all of them. */
+    private function filter_sql( $search, $category, $loose = false ) {
         global $wpdb;
         $sql = '';
-        if ( '' !== $search ) {
-            $like = '%' . $wpdb->esc_like( $search ) . '%';
-            $sql .= $wpdb->prepare( ' AND (p.post_title LIKE %s OR l.sku LIKE %s OR pp.post_title LIKE %s)', $like, $like, $like );
+        if ( '' !== trim( (string) $search ) ) {
+            $terms = self::search_terms( $search );
+            if ( ! $terms ) {
+                $like = '%' . $wpdb->esc_like( trim( $search ) ) . '%';
+                $sql .= $wpdb->prepare( ' AND (p.post_title LIKE %s OR l.sku LIKE %s OR pp.post_title LIKE %s)', $like, $like, $like );
+            } elseif ( ! $loose || count( $terms ) < 3 ) {
+                foreach ( $terms as $t ) {
+                    $sql .= ' AND ' . $this->term_sql( $t );
+                }
+            } else {
+                $parts = array();
+                foreach ( $terms as $t ) {
+                    $parts[] = '(CASE WHEN ' . $this->term_sql( $t ) . ' THEN 1 ELSE 0 END)';
+                }
+                $sql .= ' AND ( ' . implode( ' + ', $parts ) . ' ) >= ' . (int) ceil( count( $terms ) / 2 );
+            }
         }
         if ( $category ) {
             $sql .= $wpdb->prepare(
@@ -299,9 +340,9 @@ class RAR_WSO_Ajax {
     }
 
     /** Level counts, units in hand and stock value for the given filters. */
-    private function stock_counts( $search = '', $category = 0 ) {
+    private function stock_counts( $search = '', $category = 0, $loose = false ) {
         global $wpdb;
-        $base = $this->product_base_sql() . $this->filter_sql( $search, $category );
+        $base = $this->product_base_sql() . $this->filter_sql( $search, $category, $loose );
         $sql  = 'SELECT COUNT(*) AS total_count,
             SUM(CASE WHEN ' . $this->level_sql( 'ok' ) . ' THEN 1 ELSE 0 END) AS ok,
             SUM(CASE WHEN ' . $this->level_sql( 'low' ) . ' THEN 1 ELSE 0 END) AS low,
@@ -625,13 +666,28 @@ class RAR_WSO_Ajax {
         );
         $order_sql = isset( $order_by[ $sort ] ) ? $order_by[ $sort ] : $order_by['qty_asc'];
 
-        $where = $this->product_base_sql() . $this->filter_sql( $search, $category );
-        if ( 'all' !== $level ) {
-            $where .= ' AND ' . $this->level_sql( $level );
-        }
+        $loose = false;
+        $build = function () use ( &$loose, $search, $category, $level ) {
+            $where = $this->product_base_sql() . $this->filter_sql( $search, $category, $loose );
+            if ( 'all' !== $level ) {
+                $where .= ' AND ' . $this->level_sql( $level );
+            }
+            return $where;
+        };
+        $where = $build();
 
         // phpcs:disable WordPress.DB.PreparedSQL.NotPrepared
         $total = (int) $wpdb->get_var( 'SELECT COUNT(*) ' . $where );
+        // A long copied name that matches no product exactly: list the closest matches instead of "nothing found".
+        if ( ! $total && count( self::search_terms( $search ) ) >= 3 ) {
+            $loose = true;
+            $where = $build();
+            $total = (int) $wpdb->get_var( 'SELECT COUNT(*) ' . $where );
+            if ( ! $total ) {
+                $loose = false;
+                $where = $build();
+            }
+        }
         $ids   = $wpdb->get_col( $wpdb->prepare( 'SELECT p.ID ' . $where . ' ORDER BY ' . $order_sql . ' LIMIT %d OFFSET %d', $per_page, ( $page - 1 ) * $per_page ) );
         // phpcs:enable
 
@@ -650,7 +706,8 @@ class RAR_WSO_Ajax {
             'total'  => $total,
             'page'   => $page,
             'pages'  => max( 1, (int) ceil( $total / $per_page ) ),
-            'counts' => $this->stock_counts( $search, $category ),
+            'counts' => $this->stock_counts( $search, $category, $loose ),
+            'loose'  => $loose,
         );
 
         if ( '1' === $this->post( 'with_cats' ) ) {
@@ -872,6 +929,150 @@ class RAR_WSO_Ajax {
                 'errors'  => $errors,
             )
         );
+    }
+
+    /**
+     * Adds a new simple product with its opening stock (Shop Managers / Administrators with the
+     * "Add new products" permission). Variable products and full editing stay in WooCommerce → Products.
+     */
+    public function product_add() {
+        $this->guard( 'rar_wso_add_products' );
+
+        $name  = trim( wp_strip_all_tags( $this->post( 'name' ) ) );
+        $name  = function_exists( 'mb_substr' ) ? mb_substr( $name, 0, 200 ) : substr( $name, 0, 200 );
+        $sku   = trim( wc_clean( $this->post( 'sku' ) ) );
+        $price = wc_format_decimal( $this->post( 'price' ) );
+        $qty   = wc_format_decimal( $this->post( 'qty', '0' ) );
+        $cat   = absint( $this->post( 'category', '0' ) );
+
+        if ( '' === $name ) {
+            wp_send_json_error( array( 'message' => __( 'Enter the product name.', 'rar-woo-stock-order' ) ), 422 );
+        }
+        if ( '' === $price || ! is_numeric( $price ) || (float) $price < 0 || (float) $price > 99999999 ) {
+            wp_send_json_error( array( 'message' => __( 'Enter a selling price (0 or more).', 'rar-woo-stock-order' ) ), 422 );
+        }
+        if ( '' === $qty || ! is_numeric( $qty ) || (float) $qty < 0 || (float) $qty > 9999999 ) {
+            wp_send_json_error( array( 'message' => __( 'Opening stock must be between 0 and 9,999,999.', 'rar-woo-stock-order' ) ), 422 );
+        }
+        if ( 'yes' !== get_option( 'woocommerce_manage_stock' ) ) {
+            wp_send_json_error( array( 'message' => __( 'Stock management is turned off for the whole shop (WooCommerce → Settings → Products → Inventory).', 'rar-woo-stock-order' ) ), 422 );
+        }
+        if ( '' !== $sku && wc_get_product_id_by_sku( $sku ) ) {
+            wp_send_json_error( array( 'message' => __( 'That SKU is already used by another product.', 'rar-woo-stock-order' ) ), 409 );
+        }
+        // The same request twice (double tap, weak signal) must not create two products.
+        $dedupe = 'rar_wso_padd_' . md5( get_current_user_id() . '|' . strtolower( $name ) . '|' . $sku . '|' . $price . '|' . $qty );
+        if ( get_transient( $dedupe ) ) {
+            wp_send_json_error( array( 'message' => __( 'This product was just added. Search for it in the stock list.', 'rar-woo-stock-order' ) ), 409 );
+        }
+        set_transient( $dedupe, 1, 30 );
+
+        $product = new WC_Product_Simple();
+        $product->set_name( $name );
+        $product->set_status( 'publish' );
+        $product->set_catalog_visibility( 'visible' );
+        $product->set_regular_price( $price );
+        if ( '' !== $sku ) {
+            try {
+                $product->set_sku( $sku );
+            } catch ( Exception $e ) {
+                delete_transient( $dedupe );
+                wp_send_json_error( array( 'message' => $e->getMessage() ), 409 );
+            }
+        }
+        $product->set_manage_stock( true );
+        $product->set_stock_quantity( (float) $qty );
+        $product->set_stock_status( (float) $qty > 0 ? 'instock' : 'outofstock' );
+        if ( $cat && term_exists( $cat, 'product_cat' ) ) {
+            $product->set_category_ids( array( $cat ) );
+        }
+        $id = $product->save();
+        if ( ! $id ) {
+            delete_transient( $dedupe );
+            wp_send_json_error( array( 'message' => __( 'The product could not be saved. Try again.', 'rar-woo-stock-order' ) ), 500 );
+        }
+
+        RAR_WSO_Log::add( $id, null, (float) $qty, __( 'New product added', 'rar-woo-stock-order' ), 'staff' );
+        RAR_WSO_Audit::add( 'product_added', $name . ' · ' . wc_format_localized_decimal( (float) $qty ) . ' pcs', $id );
+        do_action( 'rar_wso_product_added', $id, get_current_user_id() );
+
+        wp_send_json_success(
+            array(
+                'message' => __( 'Product added.', 'rar-woo-stock-order' ),
+                'product' => $this->product_payload( wc_get_product( $id ), time() ),
+            )
+        );
+    }
+
+    /** Report numbers for the preview, image and PDF (see RAR_WSO_Report_Builder). */
+    public function report_data() {
+        $this->guard( 'rar_wso_reports' );
+
+        $sections = array_filter( array_map( 'sanitize_key', explode( ',', $this->post( 'sections', 'sales,stock' ) ) ) );
+        $report   = RAR_WSO_Report_Builder::build(
+            array(
+                'from'     => $this->post( 'from' ),
+                'to'       => $this->post( 'to' ),
+                'staff_id' => absint( $this->post( 'staff_id', '0' ) ),
+                'sections' => $sections,
+                'full'     => false,
+            )
+        );
+        if ( is_wp_error( $report ) ) {
+            wp_send_json_error( array( 'message' => $report->get_error_message() ), 422 );
+        }
+        $out = array( 'report' => $report );
+        if ( RAR_WSO_Plugin::can_report_all() && '1' === $this->post( 'with_people' ) ) {
+            $out['people'] = RAR_WSO_Report_Builder::people();
+        }
+        wp_send_json_success( $out );
+    }
+
+    /**
+     * Excel (.xlsx) or CSV download of the same report with every row (POST + nonce, so the app
+     * can fetch it as a file and hand it to the phone's share sheet).
+     */
+    public function report_file() {
+        $this->guard( 'rar_wso_export' );
+        $this->guard( 'rar_wso_reports' );
+
+        $format   = 'csv' === $this->post( 'format' ) ? 'csv' : 'xlsx';
+        $sections = array_filter( array_map( 'sanitize_key', explode( ',', $this->post( 'sections', 'sales,stock' ) ) ) );
+        $report   = RAR_WSO_Report_Builder::build(
+            array(
+                'from'     => $this->post( 'from' ),
+                'to'       => $this->post( 'to' ),
+                'staff_id' => absint( $this->post( 'staff_id', '0' ) ),
+                'sections' => $sections,
+                'full'     => true,
+            )
+        );
+        if ( is_wp_error( $report ) ) {
+            wp_send_json_error( array( 'message' => $report->get_error_message() ), 422 );
+        }
+
+        $m    = $report['meta'];
+        $base = sanitize_file_name( 'report-' . $m['from'] . '_to_' . $m['to'] . ( $m['staff_id'] ? '-' . sanitize_title( $m['staff'] ) : '' ) );
+        $body = false;
+        if ( 'xlsx' === $format ) {
+            $body = RAR_WSO_Xlsx::build( RAR_WSO_Report_Builder::sheets( $report ) );
+            if ( false === $body ) {
+                $format = 'csv';
+            }
+        }
+        if ( 'csv' === $format ) {
+            $body = RAR_WSO_Report_Builder::csv( $report );
+        }
+
+        RAR_WSO_Audit::add( 'report_export', strtoupper( $format ) . ' ' . $m['from'] . ' → ' . $m['to'] . ' · ' . $m['staff'] );
+
+        nocache_headers();
+        header( 'X-Content-Type-Options: nosniff' );
+        header( 'Content-Type: ' . ( 'xlsx' === $format ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv; charset=utf-8' ) );
+        header( 'Content-Disposition: attachment; filename="' . $base . '.' . $format . '"' );
+        header( 'Content-Length: ' . strlen( $body ) );
+        echo $body; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- binary file
+        exit;
     }
 
     public function stock_log() {
