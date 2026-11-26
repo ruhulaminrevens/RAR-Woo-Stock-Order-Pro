@@ -777,8 +777,16 @@ try {
 	rar_login( $manager );
 	list( $st, $r ) = rar_call( 'report_data', array( 'from' => $today, 'to' => $today, 'sections' => 'sales,stock', 'with_people' => 1 ) );
 	rar_ok( 200 === $st && ! empty( $r['success'] ) && isset( $r['data']['report']['sales']['summary'], $r['data']['report']['stock']['snapshot'] ), 'manager gets a sales + stock report', "$st" );
-	list( $st, $r ) = rar_call( 'report_data', array( 'from' => '2020-01-01', 'to' => $today ) );
-	rar_ok( 200 === $st && ! empty( $r['data']['report']['meta']['days'] ) && $r['data']['report']['meta']['days'] <= 366, 'report range is capped at 366 days' );
+	// Reject overlong reports rather than silently truncating accounting data.
+	$range_end = RAR_WSO_Reports::today_start();
+	$max_from = $range_end->modify( '-365 days' )->format( 'Y-m-d' );
+	$over_from = $range_end->modify( '-366 days' )->format( 'Y-m-d' );
+	list( $st, $r ) = rar_call( 'report_data', array( 'from' => $max_from, 'to' => $today ) );
+	rar_ok( 200 === $st && ! empty( $r['success'] ) && 366 === ( $r['data']['report']['meta']['days'] ?? 0 ) && $max_from === ( $r['data']['report']['meta']['from'] ?? '' ), 'report accepts all 366 requested days without truncation', "$st" );
+	list( $st, $r ) = rar_call( 'report_data', array( 'from' => $over_from, 'to' => $today ) );
+	rar_ok( 422 === $st && isset( $r['success'] ) && false === $r['success'] && ! empty( $r['data']['message'] ) && ! isset( $r['data']['report'] ), 'report preview rejects a 367-day range with a validation error', "$st" );
+	list( $st, $r ) = rar_call( 'report_file', array( 'from' => $over_from, 'to' => $today, 'format' => 'xlsx' ) );
+	rar_ok( 422 === $st && isset( $r['success'] ) && false === $r['success'] && ! empty( $r['data']['message'] ), 'report export rejects a 367-day range with a validation error', "$st" );
 	$xl = wp_remote_post( $GLOBALS['rar_base'] . '/wp-admin/admin-ajax.php', array( 'body' => array( 'action' => 'rar_wso_report_file', 'nonce' => wp_create_nonce( 'rar_wso_nonce' ), 'from' => $today, 'to' => $today, 'format' => 'xlsx' ), 'cookies' => $GLOBALS['rar_auth'], 'timeout' => 60, 'sslverify' => false ) );
 	$xb = wp_remote_retrieve_body( $xl );
 	rar_ok( 200 === (int) wp_remote_retrieve_response_code( $xl ) && ( 'PK' === substr( $xb, 0, 2 ) || false !== strpos( (string) wp_remote_retrieve_header( $xl, 'content-type' ), 'csv' ) ), 'Excel (or CSV fallback) export downloads' );
