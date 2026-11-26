@@ -168,3 +168,34 @@ jobs:
         with:
           name: rar-woo-stock-order-zip
           path: rar-woo-stock-order-v*.zip
+
+  release_v160:
+    name: Publish requested v1.6.0 release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish exact reviewed distribution ZIP once
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          asset=dist/rar-woo-stock-order-v1.6.0.zip
+          tag=v1.6.0
+          expected=7f19d738f802529fb18f5b2f8c896ef07ccd0a57
+          version=$(grep -m1 -oP '^\s*\*\s*Version:\s*\K[0-9.]+' rar-woo-stock-order.php)
+          if [ "$version" != 1.6.0 ]; then
+            echo "Not the requested version; skipping."
+            exit 0
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release already exists; leaving it untouched."
+            exit 0
+          fi
+          test "$(git hash-object "$asset")" = "$expected"
+          unzip -tq "$asset"
+          gh release create "$tag" "$asset" --target "$GITHUB_SHA" --title "v1.6.0" --notes "Reports, manager stock and product creation, theme and app identity, access control, and corrected report range smoke coverage. CI passed before publishing."
+          gh release view "$tag" --json tagName,url,assets
